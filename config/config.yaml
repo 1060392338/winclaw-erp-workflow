@@ -1,0 +1,110 @@
+# 跨境ERP多Agent自动化工作流 — 主配置
+# 跨平台：Windows/Mac/Linux，通过 OpenClaw Gateway 运行
+# 一个ERP账号可挂多个店铺，发布时用户选择目标店铺
+
+erp:
+  url: "https://www.huohanhan.com"        # 货憨憨ERP
+  login_method: "cdp"                     # 通过 Chrome CDP 连接已有登录态
+  cdp_ports:                              # Chrome CDP 端口列表（自动扫描，第一个有响应的用）
+    - 9223
+    - 9222
+    - 9229
+    - 9224
+
+# 该ERP账号下绑定的所有店铺
+stores:
+# 店铺列表：请根据你的实际账号修改
+#  api/product/collect/getStores 返回什么就填什么
+  - id: "store_1"
+    name: "店铺A"
+    platform: "Shopee"
+    region: "TW"
+  - id: "store_2"
+    name: "店铺B"
+    platform: "Shopee"
+    region: "TW"
+
+# 浏览器配置（跨平台 — Windows/Mac/Linux 自动检测）
+browser:
+  # chrome_path 留空则自动检测（优先级：环境变量 → 默认路径查找）
+  chrome_path: ""
+  # Chrome 用户数据目录（持久化登录态）
+  # Windows: C:/Users/<用户名>/chrome_cdp_profile
+  # Mac:     /tmp/chrome_cdp_profile
+  # Linux:   /tmp/chrome_cdp_profile
+  user_data_dir: ""                       # 留空则自动生成
+  remote_debugging_ports:                  # CDP 端口列表（和 erp.cdp_ports 保持一致）
+    - 9223
+    - 9222
+    - 9229
+    - 9224
+  remote_allow_origins: "*"
+  # 拼多多反爬参数
+  pdd_delay_min: 2.0                     # 操作间最小延迟（秒）
+  pdd_delay_max: 5.0                     # 操作间最大延迟（秒）
+  pdd_mouse_move_steps: 3                # 鼠标移动轨迹步数
+
+# 执行环境
+runtime:
+  platform: "openclaw"                   # openclaw（跨平台消息网关）
+  # OpenClaw Gateway 负责：
+  #   - 接收用户指令 → 启动工作流
+  #   - 中断确认（PDD扫码/店铺选择/发布确认）→ 消息通道传递
+  #   - 进度通知 → 实时推送
+
+# LLM 模型配置（从 .env 读取 API Key）
+llm:
+  image_model: "qwen3-vl-plus"              # 多模态：图片合规分析
+  text_model: "deepseek-v4-flash"          # 纯文本：主Agent/法规查询（与 .env 默认一致）
+  light_model: "deepseek-v4-flash"       # 轻量：法规检索初筛
+  temperature_decision: 0.3              # 决策型任务温度
+  temperature_creative: 0.7              # 创意型任务温度
+  ocr_confidence_threshold: 0.8          # OCR置信度兜底阈值
+
+# 合规规则（台湾市场）
+compliance:
+  # 台湾广告法禁用词（内置知识库）
+  banned_keywords:
+    - "最"
+    - "第一"
+    - "唯一"
+    - "全网"
+    - "国家级"
+    - "最高级"
+    - "最佳"
+    - "顶级"
+    - "极品"
+    - "绝对"
+    - "特效"
+    - "减肥"
+    - "美白"
+    - "祛斑"
+    - "医疗"
+    - "治疗"
+    - "治愈"
+    - "降血糖"
+    - "血糖"
+    - "保健"
+    - "保健品"
+    - "胶囊"
+    - "蓝帽"
+    - "红景天"
+    - "黄芪"
+    - "辅助降"
+    - "降压"
+    - "降血压"
+    - "降血脂"
+    - "处方"
+    - "药准字"
+    - "国药准字"
+
+# 数据存储（按账号+会话隔离）
+data:
+  base_dir: "data"                       # 按账号隔离: data/{erp账号}/
+  screenshots_dir: "screenshots"         # 审计截图
+  checkpoint_db: "state.db"              # SQLite checkpoint持久化
+
+# 采集限制
+collection:
+  max_per_shop: 50                       # 单店铺最大采集数
+  max_total: 100                         # 单次采集总数上限

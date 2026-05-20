@@ -1,0 +1,33 @@
+# 跨境ERP多Agent自动化 — Python依赖
+# 安装: pip install -r requirements.txt
+
+# 浏览器自动化（单引擎架构）
+playwright>=1.40.0
+DrissionPage>=4.0.0
+
+# CDT 直连（websocket方式，替代DrissionPage）
+websocket-client>=1.6.0
+
+# HTTP 请求
+requests>=2.28.0
+
+# LangGraph 工作流引擎
+langgraph>=0.2.0
+
+# 数据模型
+pydantic>=2.0.0
+
+# 配置管理
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 图片处理
+Pillow>=10.0.0
+pytesseract>=0.3.10
+
+# LLM SDK（按实际使用选择）
+# openai>=1.0.0
+# langchain>=0.3.0
+
+# 日志
+# structlog>=24.0.0

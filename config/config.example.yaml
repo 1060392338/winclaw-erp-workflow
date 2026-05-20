@@ -1,0 +1,48 @@
+# 跨境ERP多Agent自动化工作流 — 配置模板
+# 复制为 config.yaml 并填入真实值
+# 跨平台：Windows/Mac/Linux，通过 OpenClaw Gateway 运行
+
+erp:
+  url: "https://www.huohanhan.com"
+  login_method: "cdp"                    # 通过 Chrome CDP 连接已有登录态
+  cdp_port: 9223
+
+stores:
+  - id: "tw_main"
+    name: "台湾旗舰店"
+    platform: "Shopee"
+    region: "TW"
+
+# 浏览器配置（跨平台，留空则自动检测）
+browser:
+  chrome_path: ""                        # 空=自动检测默认路径
+  user_data_dir: ""                      # 空=自动生成 temp 目录
+  remote_debugging_port: 9223
+  remote_allow_origins: "*"
+  pdd_delay_min: 2.0
+  pdd_delay_max: 5.0
+  pdd_mouse_move_steps: 3
+
+# 运行环境
+runtime:
+  platform: "openclaw"                   # OpenClaw Gateway（跨平台消息网关）
+
+llm:
+  image_model: "qwe3.6plus"
+  text_model: "deepseek-v4-pro"
+  light_model: "deepseek-v4-flash"
+  temperature_decision: 0.3
+  temperature_creative: 0.7
+  ocr_confidence_threshold: 0.8
+
+compliance:
+  banned_keywords:
+    - "最"
+    - "第一"
+    - "唯一"
+    - "全网"
+    - "国家级"
+
+collection:
+  max_per_shop: 50
+  max_total: 100
