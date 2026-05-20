@@ -211,26 +211,20 @@ def main():
             print("\n  ℹ️  无合规商品可认领，流程结束")
             return 0
 
-        # 认领 — 用户指定了店铺（--claim-to）则自动认领，否则让用户在这里选
+        # 认领 — 用户指定了店铺（--claim-to）则自动认领
+        # 否则打印店铺列表等待用户在聊天中告诉我
         if args.claim_to:
             step(f"阶段2/3: 自动认领到 → {args.claim_to}")
             stdout2, rc2 = run_script("run_compliance_claim.py", [
                 "--claim-to", args.claim_to, "--resume"
             ], timeout=300, retry=1)
         else:
-            # 在飞书/非交互终端选店铺 — 打出店铺列表让用户在聊天中选
             step("阶段2/3: 选择认领店铺")
-            print("\n  ⌛ 可用店铺列表:")
+            print("\n  📋 可用店铺列表:")
             for i, s in enumerate(stores):
                 print(f"    {i+1}. {s}")
-            print("\n  ⚠️ 非交互模式，请在聊天中告诉我要选第几个。")
-            print(f"  · 说'第一个'或'順順'")
-            # 非交互终端下 input() 会 EOFError，直接退出让用户通过参数指定
-            print(f"\n  🔄 想继续运行请用:")
-            print(f"    python run_workflow.py --claim-to \"店铺名\" --resume")
-            print(f"  或直接指定:")
-            print(f"    python run_workflow.py --claim-to \"{stores[0]}\" --resume")
-            return 0
+            print("\n  ⏸️  请告诉我要认领到哪个店铺（说'第一个'或店名）")
+            print(f"  例如：认领到第1个  或  认领到順順の小屋童裝")
 
         json_data2 = parse_json_output(stdout2)
         if json_data2:
