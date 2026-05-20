@@ -136,10 +136,18 @@ def main():
     for _ in range(20):
         body = page.evaluate('document.body.innerText')
         
-        # 路径A: 「未设置类目」弹窗 → 跳过 → 继续发布 → 保存
+        # 路径A: 「未设置类目」弹窗 → 跳过
         if '跳过未设置类目产品并继续发布' in body:
             print("  弹窗A: 未设置类目，点击跳过", flush=True)
             page.locator('text=跳过未设置类目产品并继续发布').first.click()
+            time.sleep(1.5)
+            # 跳过后页面回到初始状态，需要重新点「产品发布」→「立即发布」
+            page.locator('button:has-text("产品发布")').first.hover()
+            time.sleep(0.3)
+            page.locator('button:has-text("产品发布")').first.click()
+            time.sleep(1)
+            page.locator('.t-dropdown__item-text').filter(has_text='立即发布').first.click()
+            print("  弹窗A: 重新点击立即发布", flush=True)
             time.sleep(1)
             continue
         

@@ -39,49 +39,55 @@ def step(msg):
     print(f"{'='*60}")
 
 def run_script(name, args, timeout=600, retry=1):
-    """运行项目内脚本，返回 stdout。失败时自动重试。"""
+    """运行项目内脚本，实时输出，返回 stdout。失败时自动重试。"""
     for attempt in range(retry + 1):
         cmd = [sys.executable, name] + args
-        print(f"  $ {' '.join(cmd)}")
+        print(f"  $ {' '.join(cmd)}", flush=True)
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                                  encoding='utf-8', errors='replace')
-            # 显示输出（缩略模式）
-            output = result.stdout
-            if len(output) > 1000:
-                # 显示最后一千字
-                print(output[-1000:])
-            else:
-                print(output)
-
-            if result.stderr:
-                err_lines = [l for l in result.stderr.split('\n')
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   encoding='utf-8', errors='replace')
+            
+            # 实时读取 stdout，逐行打印
+            stdout_lines = []
+            for line in proc.stdout:
+                print(line, end='', flush=True)
+                stdout_lines.append(line)
+            
+            # 读取 stderr（过滤已知警告）
+            stderr_out = proc.stderr.read()
+            if stderr_out:
+                err_lines = [l for l in stderr_out.split('\n')
                             if 'DeprecationWarning' not in l and 'SyntaxWarning' not in l]
                 if err_lines:
-                    print(f"  stderr: {'; '.join(err_lines[-3:])}")
+                    filtered = [l for l in err_lines if l.strip()]
+                    if filtered:
+                        print(f"  stderr: {'; '.join(filtered[-3:])}", flush=True)
 
-            if result.returncode == 0:
-                return result.stdout, 0
+            proc.wait(timeout=timeout)
+            stdout = ''.join(stdout_lines)
+            rc = proc.returncode
 
-            # 非零退出码，但可能包含 JSON 输出（run_compliance_claim 常返回非零）
-            if '--JSON--' in result.stdout:
-                return result.stdout, result.returncode
+            if rc == 0:
+                return stdout, 0
+
+            if '--JSON--' in stdout:
+                return stdout, rc
 
             if attempt < retry:
-                print(f"  ⚠️ 退出码 {result.returncode}，{attempt+1}/{retry} 重试...")
+                print(f"  ⚠️ 退出码 {rc}，{attempt+1}/{retry} 重试...", flush=True)
                 time.sleep(3)
             else:
-                return result.stdout, result.returncode
+                return stdout, rc
 
         except subprocess.TimeoutExpired:
             if attempt < retry:
-                print(f"  ⚠️ 超时，{attempt+1}/{retry} 重试...")
+                print(f"  ⚠️ 超时，{attempt+1}/{retry} 重试...", flush=True)
                 time.sleep(3)
             else:
-                print(f"  ❌ 超时 {timeout}s")
+                print(f"  ❌ 超时 {timeout}s", flush=True)
                 return "", -1
         except Exception as e:
-            print(f"  ❌ 异常: {e}")
+            print(f"  ❌ 异常: {e}", flush=True)
             return "", -1
 
     return "", -1

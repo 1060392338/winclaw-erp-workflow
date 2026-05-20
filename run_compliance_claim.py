@@ -53,9 +53,19 @@ def extract_unclaimed_products(page) -> list[dict]:
     """
     from infrastructure.config_loader import ConfigLoader
     _cc_cfg = ConfigLoader().load()
-    page.goto(f"{_cc_cfg.erp_url}/member/product/general/collect-box")
-    page.wait_for_load_state("networkidle", timeout=30000)
-    time.sleep(3)
+    # 三重保障导航：慢速+domcontentloaded+重试
+    for _attempt in range(3):
+        try:
+            page.goto(f"{_cc_cfg.erp_url}/member/product/general/collect-box", wait_until="domcontentloaded", timeout=60000)
+            time.sleep(3)
+            page.wait_for_load_state("networkidle", timeout=60000)
+            break
+        except Exception as _e:
+            if _attempt < 2:
+                print(f"  ⚠️ 导航采集箱被中断，第{_attempt+2}次重试...", flush=True)
+                time.sleep(3)
+            else:
+                raise
 
     # 关闭弹窗
     try:
@@ -69,8 +79,13 @@ def extract_unclaimed_products(page) -> list[dict]:
         pass
     time.sleep(2)
 
-    # 切到「未认领」tab
-    page.locator("text=未认领").first.click()
+    # 切到「未认领」tab（用 JS 避免中文编码问题）
+    page.evaluate("""() => {
+        const tabs = document.querySelectorAll('[class*="t-tab"]');
+        for (const t of tabs) {
+            if (t.textContent.match(/未认领|鏈棰?/)) { t.click(); return; }
+        }
+    }""")
     page.wait_for_load_state("networkidle", timeout=30000)
     time.sleep(3)
 
@@ -260,8 +275,13 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
     }""")
     time.sleep(1)
 
-    # 切未认领tab
-    page.locator("text=未认领").first.click()
+    # 切未认领tab（用 JS 避免中文编码问题）
+    page.evaluate("""() => {
+        const tabs = document.querySelectorAll('[class*="t-tab"]');
+        for (const t of tabs) {
+            if (t.textContent.match(/未认领|鏈棰?/)) { t.click(); return; }
+        }
+    }""")
     page.wait_for_load_state("networkidle", timeout=30000)
     time.sleep(2)
 

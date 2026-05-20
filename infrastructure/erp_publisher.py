@@ -36,9 +36,23 @@ class ERPPublisher:
         self.page.wait_for_load_state("networkidle", timeout=30000)
 
     def navigate_to_collection_box(self):
-        """导航到采集箱"""
-        self.page.goto(self.COLLECT_BOX_URL)
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        """导航到采集箱（三重保障：慢速+等待+重试）"""
+        import time as _time
+        max_retry = 3
+        for attempt in range(max_retry):
+            try:
+                # 先用 wait_until=domcontentloaded 减少导航冲突窗口
+                self.page.goto(self.COLLECT_BOX_URL, wait_until="domcontentloaded", timeout=60000)
+                # 等渲染稳定后再等网络空闲
+                _time.sleep(3)
+                self.page.wait_for_load_state("networkidle", timeout=60000)
+                break
+            except Exception as e:
+                if attempt < max_retry - 1:
+                    print(f"  ⚠️ 导航采集箱被中断，第{attempt+2}次重试...", flush=True)
+                    _time.sleep(2)
+                else:
+                    raise
 
     def select_products_in_collection_box(self, erp_ids: list[str]):
         """在采集箱勾选合规商品"""
