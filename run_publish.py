@@ -114,10 +114,20 @@ def main():
     page.locator('.t-dropdown__item-text').filter(has_text='立即发布').first.click()
     print("[4/4] 已点立即发布", flush=True)
 
-    # 找保存按钮 — locator API
+    # 处理弹窗（两种路径）
     saved = False
-    for _ in range(30):
-        try:
+    for _ in range(20):
+        body = page.evaluate('document.body.innerText')
+        
+        # 路径A: 「未设置类目」弹窗 → 跳过 → 继续发布 → 保存
+        if '跳过未设置类目产品并继续发布' in body:
+            print("  弹窗A: 未设置类目，点击跳过", flush=True)
+            page.locator('text=跳过未设置类目产品并继续发布').first.click()
+            time.sleep(1)
+            continue
+        
+        # 路径B: 点击「产品发布」后的确认弹窗 → 保存
+        if '保存' in body:
             save = page.locator('.t-dialog__footer button:has-text("保存")')
             if save.count() > 0 and save.first.is_visible():
                 save.first.click()
@@ -125,10 +135,9 @@ def main():
                 saved = True
                 time.sleep(2)
                 break
-        except:
-            pass
-        time.sleep(0.3)
-
+        
+        time.sleep(0.5)
+    
     if not saved:
         print("  ⚠️ 未找到保存按钮", flush=True)
 
