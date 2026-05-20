@@ -136,19 +136,28 @@ def main():
     for _ in range(20):
         body = page.evaluate('document.body.innerText')
         
-        # 路径A: 「未设置类目」弹窗 → 跳过
-        if '跳过未设置类目产品并继续发布' in body:
+        # 路径A: 「未设置类目」弹窗 → 跳过 → 等弹窗变保存
+        if ('跳过未设置类目产品并继续发布' in body or '璺宠繃鏈缃被鐩骇' in body):
             print("  弹窗A: 未设置类目，点击跳过", flush=True)
-            page.locator('text=跳过未设置类目产品并继续发布').first.click()
-            time.sleep(1.5)
-            # 跳过后页面回到初始状态，需要重新点「产品发布」→「立即发布」
-            page.locator('button:has-text("产品发布")').first.hover()
-            time.sleep(0.3)
-            page.locator('button:has-text("产品发布")').first.click()
-            time.sleep(1)
-            page.locator('.t-dropdown__item-text').filter(has_text='立即发布').first.click()
-            print("  弹窗A: 重新点击立即发布", flush=True)
-            time.sleep(1)
+            try:
+                page.locator('text=跳过未设置类目产品并继续发布').first.click(timeout=3000)
+            except:
+                # 编码损坏时用 JS 兜底
+                page.evaluate("""() => {
+                    const btns = document.querySelectorAll('[class*="dialog"] button, [class*="dialog"] span');
+                    for (const btn of btns) {
+                        if (btn.textContent.includes('跳过') || btn.textContent.includes('璺宠繃')) {
+                            btn.click(); return;
+                        }
+                    }
+                }""")
+            time.sleep(2)
+            # 等弹窗从「跳过」变成「保存」
+            for _ in range(10):
+                body2 = page.evaluate('document.body.innerText')
+                if '保存' in body2 and '跳过' not in body2:
+                    break
+                time.sleep(0.5)
             continue
         
         # 路径B: 点击「产品发布」后的确认弹窗 → 保存
