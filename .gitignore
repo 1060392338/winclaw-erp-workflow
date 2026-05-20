@@ -1,0 +1,22 @@
+# API Key 配置
+.env
+
+# 状态文件
+.checkpoint.db
+.last_thread_id
+.wf_interrupt.json
+.claim_state.json
+.preferred_store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Playwright
+playwright/driver/
