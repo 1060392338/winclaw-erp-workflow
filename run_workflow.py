@@ -274,14 +274,18 @@ def main():
 
     if not publish_ids:
         print("  ⚠️ 无主货号，跳过发布")
-        # 检查采集箱是否还有残留
         step("  🔄 清理采集箱残留...")
         run_script("run_compliance_claim.py", ["--delete-rejected"], timeout=120, retry=1)
         return 0
 
     publish_id_list = publish_ids.split(",")
-    print(f"  待发布主货号: {', '.join(publish_id_list)}")
-    print(f"  发布主货号: {publish_ids}")
+    print(f"\n  {'='*60}")
+    print(f"  📋 待发布商品")
+    print(f"    总数: {len(publish_id_list)} 件")
+    print(f"    主货号列表:")
+    for _i, _pid in enumerate(publish_id_list, 1):
+        print(f"      {_i}. {_pid}")
+    print(f"  {'='*60}")
 
     # 轮询：在发布页搜每个主货号，直到全部出现
     claimed_store = args.claim_to
@@ -316,7 +320,16 @@ def main():
     print(f"  发布主货号: {publish_ids}")
     run_script("run_publish.py", [claimed_store, "--products", publish_ids], timeout=300, retry=1)
 
-    # 清理采集箱：删除残留在采集箱的不合规商品
+    print(f"\n{'='*60}")
+    print(f"  📦 发布汇总")
+    print(f"    发布总数: {len(publish_id_list)} 件")
+    print(f"    店铺: {claimed_store}")
+    print(f"    发布主货号:")
+    for _i, _pid in enumerate(publish_id_list, 1):
+        print(f"      {_i}. {_pid}")
+    print(f"  {'='*60}")
+
+    # 清理采集箱
     step("  🔄 清理采集箱残留...")
     run_script("run_compliance_claim.py", ["--delete-rejected"], timeout=120, retry=1)
 
