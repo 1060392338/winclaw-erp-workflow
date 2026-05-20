@@ -192,9 +192,37 @@ def main():
         stores = json_data.get("stores", [])
         claimed_ids = json_data.get("claimed_product_ids", [])
 
-        print(f"\n  📊 审核结果:")
-        print(f"    通过: {pass_count} 件")
-        print(f"    拒绝: {reject_count} 件")
+        # 从 stdout 中提取每条商品审查结果
+        import re as _re
+        _product_lines = []
+        for _l in (stdout or "").split("\n"):
+            _m = _re.match(r"^\s+([✅❌])\s+\[([^\]]+)\]\s+(.+)$", _l)
+            if _m:
+                _product_lines.append({"icon": _m.group(1), "status": _m.group(2), "title": _m.group(3).strip()})
+
+        print(f"\n  {'='*60}")
+        print(f"  📊 合规审查结果汇总")
+        print(f"  {'='*60}")
+        print(f"  采集箱共: {pass_count + reject_count} 个商品")
+        if _product_lines:
+            print(f"  {'='*60}")
+            print(f"  ✅ 合规商品 ({pass_count} 件):")
+            for _p in _product_lines:
+                if _p["icon"] == "✅":
+                    print(f"    ✅ [{_p['status']}] {_p['title'][:55]}")
+            if pass_count == 0:
+                print("    (无)")
+            print()
+            print(f"  ❌ 不合规商品 ({reject_count} 件):")
+            for _p in _product_lines:
+                if _p["icon"] == "❌":
+                    print(f"    ❌ [{_p['status']}] {_p['title'][:55]}")
+            if reject_count == 0:
+                print("    (无)")
+        else:
+            print(f"  ✅ 合规: {pass_count} 件")
+            print(f"  ❌ 不合规: {reject_count} 件")
+        print(f"  {'='*60}")
 
         # 如果还有被拒商品但删除可能没成功，再调一次 --delete-rejected 确保删除
         if reject_count > 0:
@@ -225,6 +253,7 @@ def main():
                 print(f"    {i+1}. {s}")
             print("\n  ⏸️  请告诉我要认领到哪个店铺（说'第一个'或店名）")
             print(f"  例如：认领到第1个  或  认领到順順の小屋童裝")
+            return 0
 
         json_data2 = parse_json_output(stdout2)
         if json_data2:
