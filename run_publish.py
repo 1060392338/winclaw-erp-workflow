@@ -132,19 +132,27 @@ def main():
     if not saved:
         print("  ⚠️ 未找到保存按钮", flush=True)
 
-    # 切发布中确认
+    # 验证阶段：分别读取各 tab 计数
     try:
-        page.locator('text=发布中').first.click()
-        time.sleep(2)
-        body = page.evaluate('document.body.innerText')
-        draft_cnt = re.findall(r'草稿箱[（(](\d+)[）)]', body)
-        pending_cnt = re.findall(r'发布中[（(](\d+)[）)]', body)
+        # 先读草稿箱 tab 计数（当前在发布中tab，但 DOM 里 tab 文本还在）
+        body_now = page.evaluate('document.body.innerText')
+        draft_cnt = re.findall(r'草稿箱[（(](\d+)[）)]', body_now)
+        pending_cnt = re.findall(r'发布中[（(](\d+)[）)]', body_now)
         print(f"  草稿箱: {draft_cnt[0] if draft_cnt else '?'}")
         print(f"  发布中: {pending_cnt[0] if pending_cnt else '?'}")
 
         if target_ids:
-            found = sum(1 for pid in target_ids if pid in body)
+            # 在发布中 tab 内搜索目标主货号
+            found = sum(1 for pid in target_ids if pid in body_now)
             print(f"  发布确认: {found}/{len(target_ids)} 在发布中", flush=True)
+            if found < len(target_ids):
+                # 可能有部分商品还没刷到发布中，切回草稿箱验证
+                page.locator('text=草稿箱').first.click()
+                time.sleep(2)
+                body_draft = page.evaluate('document.body.innerText')
+                missing = [pid for pid in target_ids if pid not in body_now and pid in body_draft]
+                if missing:
+                    print(f"  ⚠️ {len(missing)}件还在草稿箱（可能发布异步中）: {missing}")
     except Exception as e:
         print(f"  验证异常: {e}", flush=True)
 
