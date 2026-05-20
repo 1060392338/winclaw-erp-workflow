@@ -247,13 +247,13 @@ def main():
         return 1
 
     # ============================================================
-    # 阶段3: 发布
+    # 阶段3: 发布前轮询校验（认领后商品需要时间同步到发布页）
     # ============================================================
     if args.skip_publish:
         print("\n  ✅ 审核认领完成，跳过发布")
         return 0
 
-    step("阶段3/3: 发布到 Shopee")
+    step("阶段3/3: 发布前校验 → 轮询等待发布页出现认领商品")
 
     publish_ids = args.products
     if not publish_ids:
@@ -268,10 +268,51 @@ def main():
 
     if not publish_ids:
         print("  ⚠️ 无主货号，跳过发布")
+        # 检查采集箱是否还有残留
+        step("  🔄 清理采集箱残留...")
+        run_script("run_compliance_claim.py", ["--delete-rejected"], timeout=120, retry=1)
         return 0
 
+    publish_id_list = publish_ids.split(",")
+    print(f"  待发布主货号: {', '.join(publish_id_list)}")
     print(f"  发布主货号: {publish_ids}")
-    run_script("run_publish.py", [args.claim_to, "--products", publish_ids], timeout=300, retry=1)
+
+    # 轮询：在发布页搜每个主货号，直到全部出现
+    claimed_store = args.claim_to
+    import time as _time
+    max_wait = 300  # 最多等5分钟
+    found_all = False
+    for attempt in range(max_wait // 10):
+        _time.sleep(10)
+        found = []
+        not_found = []
+        for pid in publish_id_list:
+            wait_out, _ = run_script("run_publish.py", [claimed_store, "--check-product", pid], timeout=30, retry=0)
+            if pid in wait_out:
+                found.append(pid)
+            else:
+                not_found.append(pid)
+        if not not_found:
+            found_all = True
+            break
+        print(f"  ⏳ 等待中 ({len(found)}/{len(publish_id_list)} 已到)...", flush=True)
+
+    if not found_all:
+        print(f"  ⚠️ 等待超时，部分商品可能未同步到发布页: {not_found}")
+        print(f"  已有 {len(found)}/{len(publish_id_list)} 个，先发布已有的")
+        publish_ids = ",".join(found)
+        if not publish_ids:
+            print("  ❌ 没有可发布的商品")
+            return 0
+
+    # 阶段4: 发布
+    step("阶段4/4: 发布到 Shopee")
+    print(f"  发布主货号: {publish_ids}")
+    run_script("run_publish.py", [claimed_store, "--products", publish_ids], timeout=300, retry=1)
+
+    # 清理采集箱：删除残留在采集箱的不合规商品
+    step("  🔄 清理采集箱残留...")
+    run_script("run_compliance_claim.py", ["--delete-rejected"], timeout=120, retry=1)
 
     print(f"\n{'='*60}")
     print(f"  🎉 全流程完成!")

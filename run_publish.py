@@ -15,6 +15,7 @@ from infrastructure.config_loader import ConfigLoader
 def main():
     parser = argparse.ArgumentParser(description="直接发布（locator弹窗版）")
     parser.add_argument("store", help="目标店铺")
+    parser.add_argument("--check-product", help="只校验指定主货号是否在发布页，不发布")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--products", help="主货号，逗号分隔")
     group.add_argument("--all", action="store_true", help="发布全部草稿")
@@ -22,6 +23,22 @@ def main():
 
     store = args.store
     target_ids = set(args.products.split(",")) if args.products else None
+
+    # 场景: 只校验不发布（供 run_workflow.py 轮询调用）
+    if args.check_product:
+        check_pid = args.check_product
+        _cfg2 = ConfigLoader().load()
+        port2 = _cfg2.erp_cdp_ports[0]
+        p2 = sync_playwright().start()
+        b2 = p2.chromium.connect_over_cdp(f"http://127.0.0.1:{port2}")
+        page2 = b2.contexts[0].pages[0]
+        page2.goto(f"{_cfg2.erp_url}/member/product/shopee/publish", wait_until="networkidle", timeout=30000)
+        time.sleep(5)
+        body2 = page2.evaluate('document.body.innerText')
+        found = check_pid in body2
+        print(f"CHECK_PRODUCT:{check_pid}:{'FOUND' if found else 'NOT_FOUND'}", flush=True)
+        p2.stop()
+        return 0 if found else 1
 
     print("=" * 60)
     print("📦 Shopee 批量发布 (直接版)")
