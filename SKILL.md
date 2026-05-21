@@ -1,6 +1,6 @@
 ---
 name: cross-border-erp-automation
-description: 跨境电商ERP自动化 — 采集箱审核→LLM合规→货憨憨认领→Shopee发布。纯脚本确定性执行，`run_workflow.py` 一键全流程。
+description: 跨境电商ERP自动化 — 采集箱审核→LLM合规→货憨憨认领→Shopee发布。`run_workflow.py` 一键全流程。
 ---
 
 # 跨境ERP自动化
