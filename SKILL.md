@@ -26,7 +26,7 @@ Python 3.12 系统环境，无虚拟环境。
    Remove-Item -Force .checkpoint.db, .last_thread_id, .wf_interrupt.json, .claim_state.json, .preferred_store -ErrorAction SilentlyContinue
    ```
 2. **全流程入口：`run_workflow.py`**（已验证全链路稳定）。
-3. **认证领店铺：必须先展示可用店铺列表让用户选择，不能自动认领或默认店铺。**
+3. **认证领店铺：必须先展示可用店铺列表让用户选择，不能自动认领或默认店铺。但用户明确指名店铺时（如说「认领到順順の小屋」），直接认领不用再问。**
 4. **发布后确认**：发布完成后不搜索验证，直接切到发布成功或发布失败列表看商品是否存在即可。
 5. **用户说「跑一遍审核」= 实时拉采集箱最新数据**，禁止用 `.claim_state.json` 旧缓存回复。
 6. **如果用户给货源ID → 用 `--products` 参数强制指定**，跳过审查直接认领+发布。
