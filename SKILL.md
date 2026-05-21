@@ -1,26 +1,36 @@
 ---
 name: cross-border-erp-automation
-description: 跨境电商ERP自动化 — 采集箱审核→LLM合规→货憨憨认领→Shopee发布。`run_workflow.py` 一键全流程。
+description: 跨境电商ERP自动化 — `run_workflow.py` 一键全流程。采集箱审核→LLM合规→类目识别→按映射表分店→Shopee发布。
 ---
 
 # 跨境ERP自动化
 
-## 项目路径
+**项目路径**: `C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new\`
+**Python**: 3.12，无虚拟环境
 
-`C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new\`
-Python 3.12，无虚拟环境。
+## 死命令
 
-## 🔴 死命令
+1. 跑前 `Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue`
+2. 编码前缀 `$env:PYTHONIOENCODING='utf-8'`
+3. 货源ID = 主货号（值一样叫法不同）
 
-1. **跑前清空状态文件**：
-   ```powershell
-   Remove-Item -Force .claim_state.json, .preferred_store -ErrorAction SilentlyContinue
-   ```
-2. **入口：`run_workflow.py`**
-3. **类目分配**：按 `store_category_map.json` 自动分配。不匹配的留采集箱不动。
-4. **货源ID = 主货号**，发布后看发布中/发布成功/发布失败 tab 确认。
+## 入口命令
 
-## 当前映射表
+```powershell
+# 全流程（指定店）
+python run_workflow.py --claim-to "順順の小屋童裝（本土）"
+
+# 全流程（自动分配）
+python run_workflow.py
+
+# 只审核
+python run_workflow.py --claim-to "店名" --skip-publish
+
+# 直接发布
+python run_workflow.py --claim-to "店名" --publish --products id1,id2
+```
+
+## 映射表（当前）
 
 ```json
 {
@@ -33,29 +43,11 @@ Python 3.12，无虚拟环境。
 }
 ```
 
-## 常用命令
+## 脚本列表
 
-```powershell
-# 清状态 + 跑全流程（指定店铺）
-Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "順順の小屋童裝（本土）"
-
-# 自动按类目分配
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py
-
-# 添加分配规则
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --add-rule "category:童裝->順順の小屋童裝（本土）"
-
-# 直接发布
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --products id1,id2
-
-# 只审核不发布
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --skip-publish
-```
-
-## 环境依赖
-
-- **Python 3.12**
-- **Chrome**（`--remote-debugging-port=9223`）
-- **依赖**：`pip install playwright requests pyyaml python-dotenv Pillow`
-- **模型**：.env 中配置（当前 image=qwen3.6-plus, light=deepseek-v4-flash）
+| 文件 | 功能 |
+|------|------|
+| `run_workflow.py` | 一键全流程入口 |
+| `run_compliance_claim.py` | 审查+认领 |
+| `run_publish.py` | 精准发布（弹窗双路径）|
+| `store_category_map.json` | 类目分配表 |
