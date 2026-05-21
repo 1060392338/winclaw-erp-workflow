@@ -47,7 +47,7 @@ cd C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new
 Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue
 
 # 全部认领到指定店铺
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "順順の小屋童裝（本土）"
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "你的店铺名"
 
 # 自动按类目分配（不传 --claim-to，需配好映射表）
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py
@@ -87,12 +87,8 @@ $env:PYTHONIOENCODING='utf-8'; python run_workflow.py
 
 ```json
 {
-  "順順の小屋童裝（本土）": [
-    "童裝",
-    "五金"
-  ],
-  "吉象星連坊（本土）": [],
-  "zhuangjiaen_（本土）": []
+  "你的店铺名（含括号）": ["童裝", "五金"],
+  "你的另一个店铺名": []
 }
 ```
 

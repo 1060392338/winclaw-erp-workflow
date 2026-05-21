@@ -122,11 +122,11 @@ print('文字模型 OK:', r.choices[0].message.content)
 ```yaml
 stores:
   - id: "store_1"
-    name: "順順の小屋童裝（本土）"       # ← 改成你的店铺名（含括号，一字不差）
+    name: "你的店铺名（含括号）"       # ← 改成你的店铺名，和ERP弹窗完全一致
     platform: "Shopee"
     region: "TW"
   - id: "store_2"
-    name: "吉象星連坊（本土）"           # ← 如果你有两个店，继续加
+    name: "你的另一个店铺名"           # ← 如果你有两个店，继续加
     platform: "Shopee"
     region: "TW"
 ```
@@ -139,8 +139,8 @@ stores:
 
 ```json
 {
-  "順順の小屋童裝（本土）": ["童裝", "五金"],
-  "吉象星連坊（本土）": []
+  "你的店铺名（含括号）": ["童裝", "五金"],
+  "你的另一个店铺名": []
 }
 ```
 
@@ -153,7 +153,7 @@ stores:
 
 > 💡 **如果你不确定怎么配，直接告诉 OpenClaw（我）你有几家店、分别卖什么品类，我帮你写好这个 JSON 文件。**
 >
-> 例：「我有两个店，小屋童装卖童装和五金，吉象星連坊卖百货」
+> 例：「我有两个店，A店卖童装和五金，B店卖百货」
 > → 我帮你生成完整映射表。
 
 ---
@@ -197,10 +197,10 @@ curl.exe -s http://127.0.0.1:9223/json/version
 Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue
 
 # 跑全流程：审核 → 认领 → 发布
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "順順の小屋童裝（本土）"
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "你的店铺名"
 
 # 如果只想审核认领不发布，加 --skip-publish
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "順順の小屋童裝（本土）" --skip-publish
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "你的店铺名" --skip-publish
 ```
 
 ### 方案 B：按类目自动分配到不同店铺（需配好映射表）
@@ -257,7 +257,7 @@ ConnectionError: 无法连接到 Chrome CDP (尝试端口: 9223,9222...)
 ### 9.3 认领时说找不到店铺
 
 ```
-❌ 未找到目标店铺 '順順の小屋童裝（本土）'
+❌ 未找到目标店铺 '你的店铺名'
 ```
 
 → 店铺名和弹窗显示不一致。检查 config.yaml 和 store_category_map.json 的店铺名是否和 ERP 弹窗完全一致（含括号、全半角）。
