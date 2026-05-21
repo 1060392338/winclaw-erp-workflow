@@ -108,18 +108,39 @@ class ComplianceChecker:
                     final_status="reject",
                 )
 
+    def _load_category_config(self) -> dict:
+        """从外部配置文件读取类目列表"""
+        import json
+        from pathlib import Path
+        cfg_file = Path(__file__).parent.parent / "config" / "category_list.json"
+        default = {
+            "categories": ["童裝", "五金", "百货", "3C", "服装", "食品", "美妆", "家居", "母婴", "户外", "宠物", "其他"],
+            "keywords": {}
+        }
+        if cfg_file.exists():
+            try:
+                return json.loads(cfg_file.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+        return default
+
     def _identify_category(self, product: Product, image_description: str = "", vision_category: str = "") -> str:
-        """用 DeepSeek flash 识别商品类目（结合视觉模型输出 + 标题）"""
+        """用 DeepSeek flash 识别商品类目（从外部配置文件读取类目列表）"""
         if product.category:
             return product.category
         if vision_category:
             return vision_category
+
+        cfg = self._load_category_config()
+        categories = cfg.get("categories", ["其他"])
+        category_list_str = "/".join(categories)
+
         try:
             from infrastructure.llm_client import get_llm_client
             import os
             client = get_llm_client()
             light_model = os.getenv("LLM_LIGHT_MODEL", "deepseek-v4-flash")
-            prompt = "你是一位电商商品类目识别专家。根据商品标题和图片描述，输出它的电商类目。只返回一个词：童裝/五金/百货/3C/服装/食品/美妆/家居/母婴/户外/宠物/其他。返回JSON格式：{\"category\": \"类目名称\"}"
+            prompt = f"你是一位电商商品类目识别专家。根据商品标题和图片描述，输出它的电商类目。只返回一个词：{category_list_str}。返回JSON格式：{{\"category\": \"类目名称\"}}"
             user_msg = f"标题：{product.title[:80]}"
             if image_description:
                 user_msg += f"\n图片描述：{image_description}"
@@ -131,13 +152,13 @@ class ComplianceChecker:
                 return result["category"]
         except Exception:
             pass
+
+        # 关键词兜底（从配置文件读取，不硬编码）
         title = product.title.lower()
-        if any(k in title for k in ['童', '婴儿', '宝宝', '儿童', '小孩', '娃', '背带裤', '睡衣', '爬服', '哈衣']):
-            return "童裝"
-        if any(k in title for k in ['五金', '钢丝', '卡头', '卡扣', '螺丝', '螺母', '扳手', '锤', '钳', '锯']):
-            return "五金"
-        if any(k in title for k in ['手机', '耳机', '充电', '数据线', '蓝牙', '电脑', '键盘', '鼠标', '摄像头']):
-            return "3C"
+        keywords = cfg.get("keywords", {})
+        for cat, kws in keywords.items():
+            if any(k.lower() in title for k in kws):
+                return cat
         return "未分类"
 
     def _review_one(self, product: Product) -> ComplianceResult:
