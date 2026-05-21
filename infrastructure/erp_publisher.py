@@ -246,7 +246,18 @@ class ERPPublisher:
             confirm = self.page.locator(
                 "button:has-text('确定'):visible"
             ).last
-        confirm.click()
+        if not confirm.count() or not confirm.first.is_visible():
+            # 终极兜底：JS 找所有可见的确定按钮
+            self.page.evaluate("""() => {
+                const btns = document.querySelectorAll('button');
+                for (const btn of btns) {
+                    if (btn.textContent.includes('\u786e\u5b9a') && btn.offsetParent !== null) {
+                        btn.click(); return;
+                    }
+                }
+            }""")
+        else:
+            confirm.first.click()
         self.page.wait_for_load_state("networkidle", timeout=30000)
 
     def filter_by_store(self, store_name: str):

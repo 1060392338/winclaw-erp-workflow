@@ -311,10 +311,14 @@ def main():
         stdout, rc = run_script("run_compliance_claim.py", [
             "--claim-to", args.claim_to, "--resume"
         ], timeout=600, retry=1)
+    elif args.claim_to:
+        stdout, rc = run_script("run_compliance_claim.py", [
+            "--claim-to", args.claim_to
+        ], timeout=600, retry=2)
     else:
         stdout, rc = run_script("run_compliance_claim.py", [
             "--list-stores"
-        ], timeout=600, retry=2)  # 删除失败会重试
+        ], timeout=600, retry=2)
 
     json_data = parse_json_output(stdout)
     if json_data:
@@ -415,150 +419,14 @@ def main():
         print("   \u5ba1\u6838\u9636\u6bb5\u5931\u8d25\uff08\u65e0\u7ed3\u6784\u5316\u8f93\u51fa\uff09")
         return 1
 
-    # ============================================================
-    # 阶段3: 如果前面已经通过 --claim-to 认领了，走旧代码的轮询+发布
-    # ============================================================
-    if args.claim_to:
-        if args.skip_publish:
-            print("\n   \u5ba1\u6838\u8ba4\u9886\u5b8c\u6210\uff0c\u8df3\u8fc7\u53d1\u5e03")
-            return 0
-
-        step("阶段3/3: \u53d1\u5e03\u524d\u6821\u9a8c -> \u8f6e\u8be2\u7b49\u5f85\u53d1\u5e03\u9875\u51fa\u73b0\u8ba4\u9886\u5546\u54c1")
-
-        publish_ids = args.products
-        if not publish_ids:
-            state_file = PROJECT / ".claim_state.json"
-            if state_file.exists():
-                try:
-                    state = json.loads(state_file.read_text(encoding='utf-8'))
-                    if state.get("claimed_product_ids"):
-                        publish_ids = ",".join(state["claimed_product_ids"])
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-        if not publish_ids:
-            print("   \u65e0\u4e3b\u8d27\u53f7\uff0c\u8df3\u8fc7\u53d1\u5e03")
-            _cleanup_and_finish(PROJECT, run_script, [])
-            return 0
-
-        publish_id_list = publish_ids.split(",")
-        overall = [(args.claim_to, publish_id_list)]
-
-        step("阶段3/3: \u53d1\u5e03\u524d\u6821\u9a8c -> \u8f6e\u8be2\u7b49\u5f85\u53d1\u5e03\u9875\u51fa\u73b0\u8ba4\u9886\u5546\u54c1")
-        import time as _time
-        max_wait = 300
-        found_all = False
-        for attempt in range(max_wait // 10):
-            _time.sleep(10)
-            found = []
-            not_found = []
-            for pid in publish_id_list:
-                wait_out, _ = run_script("run_publish.py", [args.claim_to, "--check-product", pid], timeout=30, retry=0)
-                if pid in wait_out:
-                    found.append(pid)
-                else:
-                    not_found.append(pid)
-            if not not_found:
-                found_all = True
-                break
-            print(f"   \u7b49\u5f85\u4e2d ({len(found)}/{len(publish_id_list)} \u5df2\u5230)...", flush=True)
-
-        if not found_all:
-            print(f"   \u7b49\u5f85\u8d85\u65f6\uff0c\u90e8\u5206\u5546\u54c1\u53ef\u80fd\u672a\u540c\u6b65: {not_found}")
-            publish_ids = ",".join(found) if found else ""
-            if not publish_ids:
-                print("   \u6ca1\u6709\u53ef\u53d1\u5e03\u7684\u5546\u54c1")
-                _cleanup_and_finish(PROJECT, run_script, overall)
-                return 0
-
-        step("阶段4/4: \u53d1\u5e03\u5230 Shopee")
-        run_script("run_publish.py", [args.claim_to, "--products", publish_ids], timeout=300, retry=1)
-        _cleanup_and_finish(PROJECT, run_script, overall)
-        return 0
-
-    if args.skip_publish:
-        print("\n  ✅ 审核认领完成，跳过发布")
-        return 0
-
-    step("阶段3/3: 发布前校验 → 轮询等待发布页出现认领商品")
-
-    publish_ids = args.products
-    if not publish_ids:
-        state_file = PROJECT / ".claim_state.json"
-        if state_file.exists():
-            try:
-                state = json.loads(state_file.read_text(encoding='utf-8'))
-                if state.get("claimed_product_ids"):
-                    publish_ids = ",".join(state["claimed_product_ids"])
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-    if not publish_ids:
-        print("  ⚠️ 无主货号，跳过发布")
-        step("  🔄 清理采集箱残留...")
-        run_script("run_compliance_claim.py", ["--delete-rejected"], timeout=120, retry=1)
-        return 0
-
-    publish_id_list = publish_ids.split(",")
-    print(f"\n  {'='*60}")
-    print(f"  📋 待发布商品")
-    print(f"    总数: {len(publish_id_list)} 件")
-    print(f"    主货号列表:")
-    for _i, _pid in enumerate(publish_id_list, 1):
-        print(f"      {_i}. {_pid}")
-    print(f"  {'='*60}")
-
-    # 轮询：在发布页搜每个主货号，直到全部出现
-    claimed_store = args.claim_to
-    import time as _time
-    max_wait = 300  # 最多等5分钟
-    found_all = False
-    for attempt in range(max_wait // 10):
-        _time.sleep(10)
-        found = []
-        not_found = []
-        for pid in publish_id_list:
-            wait_out, _ = run_script("run_publish.py", [claimed_store, "--check-product", pid], timeout=30, retry=0)
-            if pid in wait_out:
-                found.append(pid)
-            else:
-                not_found.append(pid)
-        if not not_found:
-            found_all = True
-            break
-        print(f"  ⏳ 等待中 ({len(found)}/{len(publish_id_list)} 已到)...", flush=True)
-
-    if not found_all:
-        print(f"  ⚠️ 等待超时，部分商品可能未同步到发布页: {not_found}")
-        print(f"  已有 {len(found)}/{len(publish_id_list)} 个，先发布已有的")
-        publish_ids = ",".join(found)
-        if not publish_ids:
-            print("  ❌ 没有可发布的商品")
-            return 0
-
-    # 阶段4: 发布
-    step("阶段4/4: 发布到 Shopee")
-    print(f"  发布主货号: {publish_ids}")
-    run_script("run_publish.py", [claimed_store, "--products", publish_ids], timeout=300, retry=1)
-
-    print(f"\n{'='*60}")
-    print(f"  📦 发布汇总")
-    print(f"    发布总数: {len(publish_id_list)} 件")
-    print(f"    店铺: {claimed_store}")
-    print(f"    发布主货号:")
-    for _i, _pid in enumerate(publish_id_list, 1):
-        print(f"      {_i}. {_pid}")
-    print(f"  {'='*60}")
-
-    # 清理采集箱
-    step("  🔄 清理采集箱残留...")
+    # 清理采集箱残留
+    step("  \U0001f504 \u6e05\u7406\u91c7\u96c6\u7bb1\u6b8b\u7559...")
     run_script("run_compliance_claim.py", ["--delete-rejected"], timeout=120, retry=1)
 
     print(f"\n{'='*60}")
-    print(f"  🎉 全流程完成!")
+    print(f"  \U0001f389 \u5168\u6d41\u7a0b\u5b8c\u6210!")
     print(f"{'='*60}")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

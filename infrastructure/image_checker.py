@@ -17,6 +17,7 @@ class ImageCheckResult:
     ocr_text: str = ""
     ocr_confidence: float = 0.0
     vision_summary: str = ""
+    vision_category: str = ""
 
 
 class ImageChecker:
@@ -73,6 +74,7 @@ class ImageChecker:
                 ocr_text=combined_text,
                 ocr_confidence=lowest_confidence,
                 vision_summary=vision_result.get("summary", ""),
+                vision_category=vision_result.get("vision_category", ""),
             )
 
         return ImageCheckResult(
@@ -148,11 +150,14 @@ class ImageChecker:
         try:
             from infrastructure.llm_client import get_llm_client
             client = get_llm_client()
-            return client.chat_json_vision(
+            result = client.chat_json_vision(
                 system_prompt=self.VISION_PROMPT,
                 image_urls=image_urls[:3],  # 最多3张
                 model=None,  # 从 .env 读取
                 temperature=0.3,
             )
+            if isinstance(result, dict):
+                return result
+            return {"issues": [], "summary": "", "vision_category": ""}
         except Exception as e:
-            return {"issues": [f"Vision调用异常: {e}"], "summary": ""}
+            return {"issues": [f"Vision调用异常: {e}"], "summary": "", "vision_category": ""}

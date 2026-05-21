@@ -197,6 +197,7 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
             pass_ids = claim_ids
             print(f"  → 直接认领模式: {len(pass_ids)} 个商品", flush=True)
         check_count = len(pass_ids)
+        reject_ids = []  # 恢复模式：reject已在首次运行时存入状态文件，不重复计算
         print(f"  → 恢复模式: 使用dry-run保存的 {len(pass_ids)} 个通过商品ID，跳过二次LLM审查")
         print(f"  → 跳过合规审查（结果与dry-run一致）")
         # reject_ids 保持 []：恢复模式只做认领，删除操作在首次 run 时已由质检员输出
@@ -466,7 +467,6 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
 
     result["claimed"] = True
     result["claimed_product_ids"] = claimed_ids
-    result["claimed_product_ids"] = claimed_ids
     result["summary"] = f"✅ 认领完成! 店铺: {chosen['store_name']}, 商品数: {len(pass_ids)}, 主货号: {len(claimed_ids)}件"
     result["preferred_store"] = chosen["store_name"]
 
@@ -536,7 +536,8 @@ def main():
         print(f"\n--JSON--\n{json.dumps(json_out, ensure_ascii=False)}")
         return 0 if result["success"] else 1
 
-    # --delete-rejected 独立处理    if args.delete_rejected:
+    # --delete-rejected 独立处理
+    if args.delete_rejected:
         if not CLAIM_STATE_FILE.exists():
             print("❌ 无状态文件，请先运行 --list-stores 或 --claim-to")
             return 1
