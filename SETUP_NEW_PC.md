@@ -16,7 +16,6 @@ cd C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new
 
 ```powershell
 pip install playwright requests pyyaml python-dotenv Pillow
-pip install langgraph langchain-openai langgraph-checkpoint-sqlite openai
 playwright install chromium
 ```
 
@@ -33,13 +32,11 @@ python -c "from playwright.sync_api import sync_playwright; print('OK')"
 LLM_API_KEY=sk-***                    # DeepSeek
 LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_TEXT_MODEL=deepseek-chat
-LLM_LIGHT_MODEL=deepseek-chat
+LLM_LIGHT_MODEL=deepseek-v4-flash
 VISION_API_KEY=sk-***                  # 阿里百炼 DashScope
 VISION_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_IMAGE_MODEL=qwen3-vl-plus
+LLM_IMAGE_MODEL=qwen3.6-plus
 ```
-
-> DeepSeek 用 `deepseek-chat`，不要用 `deepseek-v4-flash`（有空内容问题）。
 
 验证：
 ```powershell
@@ -55,7 +52,6 @@ print('文字模型OK:', r.choices[0].message.content)
 ## 五、启动 Chrome
 
 ```powershell
-# 关闭所有Chrome后运行
 "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9223 --remote-allow-origins=*
 ```
 
@@ -76,17 +72,13 @@ Session 过期是服务端行为，跨天需重新登录。
 ## 七、运行工作流
 
 ```powershell
-# 1. 清空状态
-Remove-Item -Force .checkpoint.db, .last_thread_id, .wf_interrupt.json, .claim_state.json, .preferred_store -ErrorAction SilentlyContinue
+# 清状态 + 跑全流程
+Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "順順の小屋童裝（本土）"
 
-# 2. 审核（不指定店铺，先看结果）
+# 自动分配模式（不传 --claim-to）
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py
-
-# 3. 用户选择店铺后继续
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --resume --claim-to "店铺名"
 ```
-
-> **注意**：首次跑不带 `--claim-to`，等审核结果出来后让用户选店，再带店名继续。
 
 ## 八、验证清单
 
