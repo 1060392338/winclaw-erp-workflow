@@ -30,16 +30,26 @@ cross-border-erp-agent-new/
 └── requirements.txt
 ```
 
+## 📖 新手配置
+
+完整配置步骤见 **[SETUP_NEW_PC.md](SETUP_NEW_PC.md)**，从零开始：
+1. 安装 Python 3.12 + Chrome
+2. 获取 DeepSeek + 阿里百炼 API Key → 填 `.env`
+3. 修改 `config/config.yaml` 中的店铺名
+4. 配好 `store_category_map.json`（强烈推荐）
+5. 启动 Chrome + 登录 ERP
+6. 一键运行
+
 ## 🚀 一键全流程
 
 ```powershell
 cd C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new
-Remove-Item -Force .claim_state.json, .preferred_store -ErrorAction SilentlyContinue
+Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue
 
 # 全部认领到指定店铺
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "順順の小屋童裝（本土）"
 
-# 自动按类目分配（不传 --claim-to）
+# 自动按类目分配（不传 --claim-to，需配好映射表）
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py
 ```
 
