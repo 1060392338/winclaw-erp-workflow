@@ -25,6 +25,7 @@ def main():
     target_ids = set(args.products.split(",")) if args.products else None
 
     # 场景: 只校验不发布（供 run_workflow.py 轮询调用）
+    # 选店铺 → 逐tab（发布中/发布成功/发布失败）读取页面文本，找主货号
     if args.check_product:
         check_pid = args.check_product
         _cfg2 = ConfigLoader().load()
@@ -34,8 +35,31 @@ def main():
         page2 = b2.contexts[0].pages[0]
         page2.goto(f"{_cfg2.erp_url}/member/product/shopee/publish", wait_until="networkidle", timeout=30000)
         time.sleep(5)
-        body2 = page2.evaluate('document.body.innerText')
-        found = check_pid in body2
+
+        # 选店铺
+        if store:
+            tags2 = page2.locator('.t-tag--check')
+            for i in range(tags2.count()):
+                txt = tags2.nth(i).text_content()
+                if txt == store:
+                    tags2.nth(i).click()
+                    break
+            time.sleep(0.5)
+            page2.locator('button:has-text("查询")').first.click()
+            time.sleep(3)
+
+        # 逐tab查找：只看发布中/发布成功/发布失败（不看草稿箱）
+        found = False
+        for tab_text in ['发布中', '发布成功', '发布失败']:
+            tab = page2.locator(f'text={tab_text}').first
+            if tab.count() > 0:
+                tab.click()
+                time.sleep(2)
+                body2 = page2.evaluate('document.body.innerText')
+                if check_pid in body2:
+                    found = True
+                    break
+
         print(f"CHECK_PRODUCT:{check_pid}:{'FOUND' if found else 'NOT_FOUND'}", flush=True)
         p2.stop()
         return 0 if found else 1
@@ -66,12 +90,36 @@ def main():
     time.sleep(2)
     print("[2/4] 草稿箱", flush=True)
 
-    # 选店铺
+    # 选店铺 — 精确匹配完整店名
+    # 页面结构：标签分多组（地区/店铺/商户），店铺标签包含完整店名
+    # 先取消所有已选店铺标签，再点击目标店铺
     tags = page.locator('.t-tag--check')
+    target_clicked = False
     for i in range(tags.count()):
-        if store[:4] in tags.nth(i).text_content():
-            tags.nth(i).click()
-            break
+        txt = tags.nth(i).text_content()
+        if txt == store:
+            # 如果已选中，跳过；否则点它
+            cls = tags.nth(i).get_attribute('class') or ''
+            if 't-tag--checked' not in cls:
+                tags.nth(i).click()
+                print(f"  选中店铺: {txt}", flush=True)
+            else:
+                print(f"  店铺已选中: {txt}", flush=True)
+            target_clicked = True
+        else:
+            # 如果是其他店铺标签且已选中，取消选中
+            cls = tags.nth(i).get_attribute('class') or ''
+            if 't-tag--checked' in cls and '全部' not in txt and '台湾' not in txt:
+                tags.nth(i).click()
+    if not target_clicked:
+        print(f"  ⚠️ 未找到店铺 [{store}]，尝试模糊匹配", flush=True)
+        for i in range(tags.count()):
+            txt = tags.nth(i).text_content()
+            if store.replace('（本土）','') in txt or store.replace('(本土)','') in txt:
+                tags.nth(i).click()
+                print(f"  模糊匹配选中: {txt}", flush=True)
+                target_clicked = True
+                break
     time.sleep(0.5)
     page.locator('button:has-text("查询")').first.click()
     time.sleep(4)

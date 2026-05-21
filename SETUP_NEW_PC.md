@@ -9,7 +9,7 @@
 ## 二、项目代码
 
 ```powershell
-cd 项目目录
+cd C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new
 ```
 
 ## 三、Python 依赖
@@ -76,9 +76,17 @@ Session 过期是服务端行为，跨天需重新登录。
 ## 七、运行工作流
 
 ```powershell
+# 1. 清空状态
 Remove-Item -Force .checkpoint.db, .last_thread_id, .wf_interrupt.json, .claim_state.json, .preferred_store -ErrorAction SilentlyContinue
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "順順の小屋童裝（本土）"
+
+# 2. 审核（不指定店铺，先看结果）
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py
+
+# 3. 用户选择店铺后继续
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --resume --claim-to "店铺名"
 ```
+
+> **注意**：首次跑不带 `--claim-to`，等审核结果出来后让用户选店，再带店名继续。
 
 ## 八、验证清单
 
