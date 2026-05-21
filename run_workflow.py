@@ -61,7 +61,11 @@ def run_script(name, args, timeout=600, retry=1):
                 if err_lines:
                     filtered = [l for l in err_lines if l.strip()]
                     if filtered:
-                        print(f"  stderr: {'; '.join(filtered[-3:])}", flush=True)
+                        msg = '; '.join(filtered[-3:])
+                        try:
+                            print(f"  stderr: {msg}", flush=True)
+                        except UnicodeEncodeError:
+                            print(f"  stderr: {msg.encode('utf-8', errors='replace').decode('utf-8')}", flush=True)
 
             proc.wait(timeout=timeout)
             stdout = ''.join(stdout_lines)
@@ -148,27 +152,42 @@ def _apply_assignment_rules(pass_products, stores, store_category_map):
 
 
 
-def _claim_and_publish_for_store(PROJECT, run_script, store_name, product_ids, skip_publish=False):
+def _claim_and_publish_for_store(PROJECT, run_script, store_name, product_ids, skip_publish=False, skip_claim=False):
+    """认领并发布商品到指定店铺。
+
+    Args:
+        skip_claim: True 时跳过认领（第一阶段 --claim-to 已认领），直接发布
+    """
     import time as _time
-    step(f"认领到 → {store_name}")
-    pid_str = ",".join(product_ids)
-    claim_out, _ = run_script("run_compliance_claim.py", ["--claim-to", store_name, "--direct-claim", pid_str], timeout=300, retry=1)
-    if claim_out and "--JSON--" in claim_out:
-        try:
-            claim_json = json.loads(claim_out.split("--JSON--")[-1].strip())
-            claimed = claim_json.get("claimed_product_ids", [])
-            if claimed:
-                product_ids = [str(c) for c in claimed]
-                print(f"  ✅ 实际认领成功 {len(product_ids)} 件", flush=True)
-        except:
-            pass
     if not product_ids:
-        print("  ⚠️ 无实际认领成功的商品，跳过发布")
+        print("  \u26a0\ufe0f \u65e0\u5546\u54c1\uff0c\u8df3\u8fc7\u53d1\u5e03")
         return
+
+    if not skip_claim:
+        # \u9700\u8981\u8ba4\u9886\uff08\u591a\u5e97\u94fa\u5206\u914d\u573a\u666f\uff09\uff1a\u8c03 --direct-claim
+        step(f"\u8ba4\u9886\u5230 \u2192 {store_name}")
+        pid_str = ",".join(product_ids)
+        claim_out, _ = run_script("run_compliance_claim.py", ["--claim-to", store_name, "--direct-claim", pid_str], timeout=300, retry=1)
+        if claim_out and "--JSON--" in claim_out:
+            try:
+                claim_json = json.loads(claim_out.split("--JSON--")[-1].strip())
+                claimed = claim_json.get("claimed_product_ids", [])
+                if claimed:
+                    product_ids = [str(c) for c in claimed]
+                    print(f"  \u2705 \u5b9e\u9645\u8ba4\u9886\u6210\u529f {len(product_ids)} \u4ef6", flush=True)
+            except:
+                pass
+        if not product_ids:
+            print("  \u26a0\ufe0f \u65e0\u5b9e\u9645\u8ba4\u9886\u6210\u529f\u7684\u5546\u54c1\uff0c\u8df3\u8fc7\u53d1\u5e03")
+            return
+    else:
+        print(f"  \u2192 \u7b2c\u4e00\u9636\u6bb5\u5df2\u8ba4\u9886\uff0c\u76f4\u63a5\u53d1\u5e03 {len(product_ids)} \u4ef6")
+
     if skip_publish:
-        print(f"  ✅ 认领到「{store_name}」完成，跳过发布")
+        print(f"  \u2705 \u5e97\u94fa\u300c{store_name}\u300d\u5904\u7406\u5b8c\u6210\uff0c\u8df3\u8fc7\u53d1\u5e03")
         return
-    step(f"发布前校验 → {store_name}")
+
+    step(f"\u53d1\u5e03\u524d\u6821\u9a8c \u2192 {store_name}")
     max_wait = 300
     found_all = False
     for attempt in range(max_wait // 10):
@@ -184,17 +203,17 @@ def _claim_and_publish_for_store(PROJECT, run_script, store_name, product_ids, s
         if not not_found:
             found_all = True
             break
-        print(f"  ⏳ 等待中 ({len(found)}/{len(product_ids)} 已到)...", flush=True)
+        print(f"  \u23f3 \u7b49\u5f85\u4e2d ({len(found)}/{len(product_ids)} \u5df2\u5230)...", flush=True)
     if not found_all:
-        print(f"  ⚠️ 等待超时，部分商品可能未同步: {not_found}")
+        print(f"  \u26a0\ufe0f \u7b49\u5f85\u8d85\u65f6\uff0c\u90e8\u5206\u5546\u54c1\u53ef\u80fd\u672a\u540c\u6b65: {not_found}")
         product_ids = found
         if not product_ids:
-            print("  ❌ 没有可发布的商品")
+            print("  \u274c \u6ca1\u6709\u53ef\u53d1\u5e03\u7684\u5546\u54c1")
             return
-    step(f"发布到 {store_name}")
+    step(f"\u53d1\u5e03\u5230 {store_name}")
     pid_str = ",".join(product_ids)
     run_script("run_publish.py", [store_name, "--products", pid_str], timeout=300, retry=1)
-    print(f"  ✅ 店铺「{store_name}」发布完成 ({len(product_ids)}件)")
+    print(f"  \u2705 \u5e97\u94fa\u300c{store_name}\u300d\u53d1\u5e03\u5b8c\u6210 ({len(product_ids)}\u4ef6)")
 
 
 def _cleanup_and_finish(PROJECT, run_script, overall_results):
@@ -400,7 +419,7 @@ def main():
                 pids = [p.get('id', '') for p in prods if p.get('id')]
                 if pids:
                     print(f"\n  -> \u8ba4\u9886\u53d1\u5e03\u5230[{s_name}]({len(pids)}\u4ef6)...")
-                    _claim_and_publish_for_store(PROJECT, run_script, s_name, pids, args.skip_publish)
+                    _claim_and_publish_for_store(PROJECT, run_script, s_name, pids, args.skip_publish, skip_claim=bool(args.claim_to))
 
         if unassigned:
             print("\n   \u4ee5\u4e0b\u5546\u54c1\u65e0\u5339\u914d\u7684\u5e97\u94fa\u7c7b\u76ee\uff0c\u8bf7\u624b\u52a8\u5206\u914d\uff1a")
