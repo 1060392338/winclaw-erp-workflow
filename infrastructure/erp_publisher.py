@@ -14,8 +14,15 @@ from playwright.sync_api import Page
 class ERPPublisher:
     """ERP认领+Shopee发布操作"""
 
-    PUBLISH_URL = "https://www.huohanhan.com/member/product/shopee/publish"
-    COLLECT_BOX_URL = "https://www.huohanhan.com/member/product/general/collect-box"
+    @classmethod
+    def get_publish_url(cls):
+        from infrastructure.config_loader import ConfigLoader
+        return ConfigLoader().load().erp_url + "/member/product/shopee/publish"
+
+    @classmethod
+    def get_collect_box_url(cls):
+        from infrastructure.config_loader import ConfigLoader
+        return ConfigLoader().load().erp_url + "/member/product/general/collect-box"
 
     # TDesign 选择器（2026-05-17 ERP实测验证）
     DIALOG_BODY = ".t-dialog__body"
@@ -32,7 +39,7 @@ class ERPPublisher:
 
     def navigate_to_publish(self):
         """导航到Shopee产品发布页"""
-        self.page.goto(self.PUBLISH_URL)
+        self.page.goto(self.get_publish_url())
         self.page.wait_for_load_state("networkidle", timeout=30000)
 
     def navigate_to_collection_box(self):
@@ -42,7 +49,7 @@ class ERPPublisher:
         for attempt in range(max_retry):
             try:
                 # 先用 wait_until=domcontentloaded 减少导航冲突窗口
-                self.page.goto(self.COLLECT_BOX_URL, wait_until="domcontentloaded", timeout=60000)
+                self.page.goto(self.get_collect_box_url(), wait_until="domcontentloaded", timeout=60000)
                 # 等渲染稳定后再等网络空闲
                 _time.sleep(3)
                 self.page.wait_for_load_state("networkidle", timeout=60000)
@@ -64,13 +71,34 @@ class ERPPublisher:
                 cb.check()
 
     def click_claim(self):
-        """点击「认领」按钮（取语义最明确的那个 — .t-button--theme-primary.t-button--variant-base）"""
-        btn = self.page.locator(
-            "button.t-button--variant-base.t-button--theme-primary:has-text('认领')"
-        ).first
-        if not btn.is_visible():
-            btn = self.page.locator("button:has-text('认领')").last
-        btn.click()
+        """点击「认领」按钮（CSS方案→JS兜底）"""
+        clicked = False
+        try:
+            btn = self.page.locator("button.t-button--variant-base.t-button--theme-primary:has-text('认领')").first
+            if btn.is_visible(timeout=3000):
+                btn.click()
+                clicked = True
+        except:
+            pass
+        if not clicked:
+            try:
+                btn = self.page.locator("button:has-text('认领')").last
+                if btn.is_visible(timeout=3000):
+                    btn.click()
+                    clicked = True
+            except:
+                pass
+        if not clicked:
+            self.page.evaluate("""() => {
+                const btns = document.querySelectorAll('button');
+                for (const btn of btns) {
+                    if (btn.textContent.includes('认领') && btn.offsetParent !== null) {
+                        btn.click(); return;
+                    }
+                }
+            }""")
+        if not clicked:
+            print("  ⚠️ 点击认领按钮失败（3种方案均未找到）", flush=True)
         self.page.wait_for_load_state("networkidle", timeout=30000)
 
     def get_store_list_from_modal(self) -> list[dict]:
@@ -427,7 +455,7 @@ def delete_rejected_products(page, reject_ids: list[str]) -> int:
 
     try:
         # 切回采集箱未认领tab
-        page.goto(ERPPublisher.COLLECT_BOX_URL)
+        page.goto(ERPPublisher.get_collect_box_url())
         page.wait_for_load_state("networkidle", timeout=30000)
         page.wait_for_selector(".virtual-table-container", timeout=10000)
         page.locator("text=未认领").first.click()

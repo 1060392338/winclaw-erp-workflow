@@ -50,6 +50,18 @@ TAIWAN_BANNED_RULES = [
     {"keyword": "胶囊", "category": "食品类", "desc": "胶囊形态的食品/保健品在台湾受健康食品管理法管制"},
     {"keyword": "红景天", "category": "药品保健类", "desc": "红景天属于中药材，在台湾受药品管理"},
     {"keyword": "黄芪", "category": "药品保健类", "desc": "黄芪属于中药材，在台湾受药品管理"},
+
+    # 政治敏感类（台湾市场禁止）
+    {"keyword": "志愿军", "category": "政治敏感", "desc": "志愿军相关商品涉及两岸政治敏感内容"},
+    {"keyword": "抗美援朝", "category": "政治敏感", "desc": "抗美援朝涉及两岸政治敏感历史"},
+    {"keyword": "红军", "category": "政治敏感", "desc": "红军相关商品涉及政治敏感内容"},
+    {"keyword": "八路军", "category": "政治敏感", "desc": "八路军相关商品涉及政治敏感内容"},
+    {"keyword": "新四军", "category": "政治敏感", "desc": "新四军相关商品涉及政治敏感内容"},
+    {"keyword": "红卫兵", "category": "政治敏感", "desc": "红卫兵相关商品涉及政治敏感内容"},
+    {"keyword": "解放军", "category": "政治敏感", "desc": "解放军相关商品涉及政治敏感军事内容"},
+    {"keyword": "天安门", "category": "政治敏感", "desc": "天安门相关商品涉及政治敏感内容"},
+    {"keyword": "共产党", "category": "政治敏感", "desc": "共产党标识或相关商品涉及政治敏感内容"},
+    {"keyword": "中国梦", "category": "政治敏感", "desc": "中国梦相关商品涉及政治敏感内容"},
 ]  # type: ignore
 
 

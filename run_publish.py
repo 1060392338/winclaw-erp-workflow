@@ -125,21 +125,35 @@ def main():
     time.sleep(4)
 
     if target_ids:
-        # 按ID匹配勾选 — 取消全部、只勾指定ID
+        # 按ID匹配勾选 — 取消全部、只勾指定ID（支持翻页）
         page.evaluate("() => { document.querySelectorAll('input[type=\"checkbox\"]').forEach(cb => {if(cb.checked) cb.click();}); }")
         time.sleep(0.3)
-        for pid in target_ids:
-            page.evaluate("""(pid) => {
-                var rows = document.querySelectorAll('[class*="virtual-table-tr"]');
-                for(var i=0;i<rows.length;i++) {
-                    if(rows[i].textContent.includes(pid)) {
-                        var cb = rows[i].querySelector('input[type="checkbox"]');
-                        if(cb) { cb.checked=true; cb.dispatchEvent(new Event('change',{bubbles:true})); }
+        total_pages = page.evaluate("""() => {
+            var pages = document.querySelectorAll('.t-pagination__number');
+            return pages.length ? Math.max(...Array.from(pages).map(p=>parseInt(p.textContent)).filter(n=>!isNaN(n)),1) : 1;
+        }""")
+        checked = 0
+        for pg in range(1, total_pages + 1):
+            if pg > 1:
+                page.evaluate("""(n) => {
+                    var pages = document.querySelectorAll('.t-pagination__number');
+                    for(var p of pages){if(parseInt(p.textContent)===n){p.click();return;}}
+                }""", pg)
+                time.sleep(3)
+            for pid in target_ids:
+                c = page.evaluate("""(pid) => {
+                    var rows = document.querySelectorAll('[class*="virtual-table-tr"]');
+                    for(var i=0;i<rows.length;i++) {
+                        if(rows[i].textContent.includes(pid)) {
+                            var cb = rows[i].querySelector('input[type="checkbox"]');
+                            if(cb && !cb.checked) { cb.checked=true; cb.dispatchEvent(new Event('change',{bubbles:true})); return 1; }
+                        }
                     }
-                }
-            }""", pid)
-            time.sleep(0.1)
-        print(f"[3/4] 勾选: {len(target_ids)} 件", flush=True)
+                    return 0;
+                }""", pid)
+                checked += c
+                time.sleep(0.1)
+        print(f"[3/4] 勾选: {checked} 件", flush=True)
     else:
         # 全选
         checked = 0

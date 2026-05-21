@@ -131,7 +131,8 @@ def extract_unclaimed_products(page) -> list[dict]:
 
 def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
                               product_ids: set[str] | None = None,
-                              resume_mode: bool = False) -> dict:
+                              resume_mode: bool = False,
+                              claim_ids: list[str] | None = None) -> dict:
     """执行合规审查 + 认领（或仅 dry-run 列出店铺）
 
     Args:
@@ -186,10 +187,16 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
 
     # 2. 如果恢复模式（从dry-run状态继续），跳过LLM合规审查，用保存的pass_ids
     pass_ids = None
-    if resume_mode and CLAIM_STATE_FILE.exists():
-        state = json.loads(CLAIM_STATE_FILE.read_text(encoding="utf-8"))
-        pass_ids = state.get("pass_ids", [])
-        check_count = state.get("check_count", 0)
+    if resume_mode:
+        if CLAIM_STATE_FILE.exists():
+            state = json.loads(CLAIM_STATE_FILE.read_text(encoding="utf-8"))
+            pass_ids = state.get("pass_ids", [])
+        else:
+            pass_ids = []
+        if claim_ids:
+            pass_ids = claim_ids
+            print(f"  → 直接认领模式: {len(pass_ids)} 个商品", flush=True)
+        check_count = len(pass_ids)
         print(f"  → 恢复模式: 使用dry-run保存的 {len(pass_ids)} 个通过商品ID，跳过二次LLM审查")
         print(f"  → 跳过合规审查（结果与dry-run一致）")
         # reject_ids 保持 []：恢复模式只做认领，删除操作在首次 run 时已由质检员输出
@@ -254,6 +261,7 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
         result["pass_count"] = len(pass_ids)
         result["reject_count"] = len(results) - len(pass_ids)
         result["summary"] = summary
+        result["pass_products"] = [{"id": r.product.id, "title": r.product.title, "category": r.product.category, "status": r.final_status} for r in results if r.final_status in ("pass", "title_optimized")]
 
         if not pass_ids:
             print("\n  ⚠️ 无合规商品可认领")
@@ -490,14 +498,45 @@ def main():
                        help="从状态文件恢复（弹窗应保持打开）")
     parser.add_argument("--products", type=str, default="",
                        help="指定货号(逗号分隔)，只处理这些商品（如 742642150541,825171316474）")
+    parser.add_argument("--claim-ids", type=str, default="",
+                       help="认领时只认领指定ID列表（逗号分隔），覆盖状态文件中的pass_ids")
+    parser.add_argument("--direct-claim", type=str, default="",
+                       help="直接认领模式：传入主货号列表（逗号分隔），不依赖状态文件")
     parser.add_argument("--delete-rejected", action="store_true",
                        help="删除不合规商品（从.claim_state.json读取reject_ids，供采集agent调用）")
     parser.add_argument("--cdp-port", type=int, default=None,
                        help="Chrome CDP 端口（默认自动扫描 9222-9229）")
     args = parser.parse_args()
 
-    # --delete-rejected 独立处理
-    if args.delete_rejected:
+    # --direct-claim 直接认领模式（不依赖状态文件）
+    if args.direct_claim:
+        if not args.claim_to:
+            print("❌ 直接认领模式需要 --claim-to 指定店铺")
+            return 1
+        direct_ids = [i.strip() for i in args.direct_claim.split(",") if i.strip()]
+        if not direct_ids:
+            print("❌ 请传入要认领的主货号")
+            return 1
+        print(f"  -> direct claim: {len(direct_ids)} items to {args.claim_to}", flush=True)
+        bm = BrowserManager(cdp_ports=[args.cdp_port] if args.cdp_port else None)
+        bm.connect()
+        print("  ✅ 已连接 Chrome")
+        result = run_compliance_and_claim(
+            page=bm.page, claim_store=args.claim_to, dry_run=False,
+            resume_mode=True, claim_ids=direct_ids,
+        )
+        result["pass_count"] = len(direct_ids)
+        print(f"\n{'=' * 60}")
+        print(f"📋 结果: {result['summary']}")
+        print(f"{'=' * 60}")
+        pass_products = result.get("pass_products", [])
+        json_out = {"success": result["success"], "summary": result["summary"],
+            "pass_count": result["pass_count"], "claimed_product_ids": result.get("claimed_product_ids", []),
+            "pass_products": pass_products}
+        print(f"\n--JSON--\n{json.dumps(json_out, ensure_ascii=False)}")
+        return 0 if result["success"] else 1
+
+    # --delete-rejected 独立处理    if args.delete_rejected:
         if not CLAIM_STATE_FILE.exists():
             print("❌ 无状态文件，请先运行 --list-stores 或 --claim-to")
             return 1
@@ -567,11 +606,13 @@ def main():
                 print(f"  {i+1}. {s['store_name']}")
 
         # JSON 输出供编排器解析
+        pass_products = result.get("pass_products", [])
         json_out = {
             "success": result["success"],
             "summary": result["summary"],
             "pass_count": result["pass_count"],
             "reject_count": result["reject_count"],
+            "pass_products": pass_products,
             "stores": [s["store_name"] for s in result["stores"]],
             "store_listed": result["store_listed"],
             "claimed": result["claimed"],

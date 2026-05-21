@@ -30,7 +30,7 @@ class ImageChecker:
 3. 包装标签是否有药品/保健品类宣称（台湾化妆品不可宣称医疗效果）
 4. 是否有未授权的认证标志（BSMI/NCC/有机认证等需有证书）
 
-返回JSON: {"compliant": true/false, "issues": ["违规项1", "违规项2"], "summary": "简要分析"}
+返回JSON: {"compliant": true/false, "issues": ["违规项1", "违规项2"], "summary": "简要分析", "image_description": "用一句话描述图片里是什么商品"}
 只返回JSON，不要其他内容。"""
 
     MAX_IMAGE_PIXELS = 100_000_000  # 100M 像素防炸弹

@@ -108,6 +108,38 @@ class ComplianceChecker:
                     final_status="reject",
                 )
 
+    def _identify_category(self, product: Product, image_description: str = "", vision_category: str = "") -> str:
+        """用 DeepSeek flash 识别商品类目（结合视觉模型输出 + 标题）"""
+        if product.category:
+            return product.category
+        if vision_category:
+            return vision_category
+        try:
+            from infrastructure.llm_client import get_llm_client
+            import os
+            client = get_llm_client()
+            light_model = os.getenv("LLM_LIGHT_MODEL", "deepseek-v4-flash")
+            prompt = "你是一位电商商品类目识别专家。根据商品标题和图片描述，输出它的电商类目。只返回一个词：童裝/五金/百货/3C/服装/食品/美妆/家居/母婴/户外/宠物/其他。返回JSON格式：{\"category\": \"类目名称\"}"
+            user_msg = f"标题：{product.title[:80]}"
+            if image_description:
+                user_msg += f"\n图片描述：{image_description}"
+            result = client.chat_json(
+                messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_msg}],
+                model=light_model, temperature=0.1,
+            )
+            if isinstance(result, dict) and result.get("category"):
+                return result["category"]
+        except Exception:
+            pass
+        title = product.title.lower()
+        if any(k in title for k in ['童', '婴儿', '宝宝', '儿童', '小孩', '娃', '背带裤', '睡衣', '爬服', '哈衣']):
+            return "童裝"
+        if any(k in title for k in ['五金', '钢丝', '卡头', '卡扣', '螺丝', '螺母', '扳手', '锤', '钳', '锯']):
+            return "五金"
+        if any(k in title for k in ['手机', '耳机', '充电', '数据线', '蓝牙', '电脑', '键盘', '鼠标', '摄像头']):
+            return "3C"
+        return "未分类"
+
     def _review_one(self, product: Product) -> ComplianceResult:
         """审查单个商品
 
@@ -148,7 +180,11 @@ class ComplianceChecker:
             logging.warning(f"标题检查异常 [{product.title[:30]}]: {e}")
             title_issues = []
 
+        image_desc = getattr(image_result, 'vision_summary', '')
+        vision_category = getattr(image_result, 'vision_category', '')
+
         if not title_issues:
+            product.category = self._identify_category(product, image_description=image_desc, vision_category=vision_category)
             return ComplianceResult(
                 product=product,
                 image_compliant=True,
@@ -158,29 +194,19 @@ class ComplianceChecker:
                 final_status="pass",
             )
 
-        # 3. 标题违规 -> LLM优化标题
-        try:
-            optimized = self.title_optimizer.optimize(
-                title=product.title,
-                issues=title_issues,
-            )
-        except Exception:
-            import logging
-            logging.warning(f"标题优化失败 [{product.title[:30]}]: 降级为原文")
-            optimized = product.title
-
+        # 3. 标题违规 -> 直接 reject（不做标题优化）
+        print(f"  🚫 标题不合规，直接拒绝: {product.title[:40]}...", flush=True)
         return ComplianceResult(
             product=product,
             image_compliant=True,
             title_compliant=False,
             image_issues=[],
             title_issues=title_issues,
-            optimized_title=optimized,
-            final_status="title_optimized",
+            final_status="reject",
         )
 
     def get_pass_ids(self, results: list[ComplianceResult]) -> list[str]:
-        """提取pass商品的ERP ID列表（含 title_optimized）"""
+        """提取pass商品的ERP ID列表"""
         return [
             r.product.erp_internal_id
             for r in results
