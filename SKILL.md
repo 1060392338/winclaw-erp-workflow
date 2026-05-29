@@ -79,6 +79,16 @@ $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --skip
 - 产出审查结果 + 认领，但**不发布**
 - 用户确认后再跑发布
 
+##### ⚡ `--skip-publish` 之后想继续发：
+```powershell
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --all
+```
+（跳过重审，直接发布全部草稿）
+或指定货号：
+```powershell
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --products ID1,ID2
+```
+
 #### ── 特殊情况：用户给货源ID ──
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --products ID1,ID2
@@ -113,6 +123,8 @@ $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publ
 ```
 
 - 店铺名必须与ERP弹窗**完全一致**
+- **留空 `[]` → 该店被排除在自动分配之外，不会收到任何商品**
+- **完全没出现在映射表中的店铺 → 等同于未配置，也不会收到自动分配**
 - 不在映射表中的类目 → **合规商品**留在采集箱不动（不合规的会被直接删除）
 - 类目由LLM识别，从 `config/category_list.json` 读取（无需改代码）。当前支持：**童裝、五金、百货、3C、服装、食品、美妆、家居、母婴、户外、宠物、其他**。修改该 JSON 即可增减类目
 

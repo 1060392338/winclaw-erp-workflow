@@ -1,5 +1,9 @@
 # 新电脑部署指南 — 跨境ERP工作流
 
+> 📌 本指南针对两类用户：
+> - **真人操作者**：按步骤装环境、配 API Key、登录 ERP，然后跑 `run_workflow.py` 全流程
+> - **OpenClaw AI 助手**：文档说明的是系统运行所需的依赖和环境，AI 按 SETUP.md + SKILL.md 决策树执行
+
 从零开始配置，到一键跑通「采集→审核→认领→发布」全流程。
 
 ---
@@ -41,9 +45,19 @@ playwright install chromium
 
 **如果 `pip install` 报错**，手动装：
 ```powershell
-pip install playwright requests pyyaml python-dotenv
+pip install playwright requests pyyaml python-dotenv openai langchain-openai langchain-core
 playwright install chromium
 ```
+
+**可选依赖**（图片 OCR 加速用，不装也能跑，会走纯 LLM Vision 兜底）：
+```powershell
+pip install pytesseract Pillow
+```
+> ⚠️ `pytesseract` 还需系统安装 Tesseract OCR 引擎：
+> 1. 下载 https://github.com/UB-Mannheim/tesseract/wiki → 选 `tesseract-ocr-w64-setup-5.3.3.20231005.exe`
+> 2. 安装时勾选中文简体 + 中文繁体语言包
+> 3. 重启终端
+> 不装此依赖 → 缺 OCR 加速，Vision 兜底一样能用但更慢更贵
 
 验证：
 ```powershell
@@ -148,7 +162,8 @@ stores:
 - 店铺名必须与 ERP 认领弹窗显示**完全一致**（含括号、全半角）
 - 类目由 LLM 自动识别，目前支持：童裝、五金、百货、3C、服装、食品、美妆、家居、母婴、户外、宠物、其他
 - 配了类目 → 该店只会收到匹配类目的商品
-- 留空 `[]` → 该店不会收到任何自动分配的商品
+- **留空 `[]` → 该店被排除在自动分配之外，不会收到任何商品**
+- **完全没出现在映射表中的店铺 → 等同于未配置，也不会收到自动分配**
 - 不在映射表中的类目 → **合规商品**留在采集箱提示手动分配（不合规的会被直接删除）
 
 > 💡 **如果你不确定怎么配，直接告诉 OpenClaw（我）你有几家店、分别卖什么品类，我帮你写好这个 JSON 文件。**
@@ -228,6 +243,7 @@ $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publ
 | 2 | Chrome | 已打开有窗口 | 没启动 → 看 6.2 |
 | 3 | Chrome 端口 | `curl.exe -s http://127.0.0.1:9223/json/version` 有返回 | 端口不通 → 检查启动参数 |
 | 4 | ERP 登录 | 采集箱页面能看到「未认领」tab | 未登录 → 手动登录 |
+| 4.5 | OCR 可选 | `python -c "import pytesseract; print('OCR OK')"` 不报错 | 不装不影响，走 Vision 兜底 |
 | 5 | .env 已配 | `Get-Content .env` 有 API Key | 没配 → 看第四章 |
 | 6 | API Key 有效 | 第四章验证命令通过 | 余额不足/Key无效 → 充值/重创建 |
 | 7 | config.yaml 已改 | 店铺名是真实名 | 没改 → 看 5.1 |
