@@ -18,21 +18,24 @@ cd C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new
 - Chrome 9223 ─ERP 已登录，采集箱有「未认领」商品
 - 运行前先清状态：`Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue`
 - 编码前缀：`$env:PYTHONIOENCODING='utf-8'`
+- **所有业务操作只走 `run_workflow.py`**，不直接调子脚本
 
 ---
 
 ## 🔴 会话流程决策树（新AI请逐条执行）
 
-这是你加载后 **第一个要执行的动作**：
+### 第0步：检查环境 → 告诉用户当前状态
 
-### 1. 确认 Chrome 在线
+检查完成后**必须把结果告诉用户**，不能默默往下走：
+
+**① 检查 Chrome**
 ```powershell
 curl.exe -s --connect-timeout 2 http://127.0.0.1:9223/json/version
 ```
-失败 → 告诉用户没连上 Chrome，参考 SETUP_NEW_PC.md 第六节启动
+- 成功 → 告诉用户 "Chrome 已连接"
+- 失败 → "Chrome 没连上，请确认已用 `--remote-debugging-port=9223` 参数启动 Chrome"（参考 SETUP_NEW_PC.md 6.2）
 
-### 2. 确认 ERP 已登录
-用 Python 快速检查采集箱页面：
+**② 检查 ERP 登录 + 采集箱是否有未认领商品**
 ```python
 from playwright.sync_api import sync_playwright
 p = sync_playwright().start(); b = p.chromium.connect_over_cdp("http://127.0.0.1:9223")
@@ -42,74 +45,113 @@ for pg in b.contexts[0].pages:
         print("UNCLAIMED_OK" if has_unclaimed else "NO_UNCLAIMED")
 b.close(); p.stop()
 ```
-- `NO_UNCLAIMED` → 告诉用户采集箱为空或未登录
-- 没找到 collect-box 页面 → 告诉用户先打开采集箱
+- `UNCLAIMED_OK` → "ERP 已登录，采集箱有未认领商品"
+- `NO_UNCLAIMED` → "采集箱为空或已全部认领过了"
+- 没找到 collect-box 页面 → "请先打开采集箱页面（https://www.huohanhan.com/member/product/general/collect-box）"
 
-### 3. 询问用户需求（首次接触时）
+**③ 检查有哪几个店铺**
+读取 `store_category_map.json` 的 key 作为可用店铺列表。
+
+**检查完成后，汇总告知用户：**
+> Chrome ✅ | ERP 已登录 | 采集箱 N 件未认领 | 已配店铺：[店A, 店B]
+
+### 第1步：询问需求
 
 **一次问清楚，不要分多次问：**
 
-> 「采集箱 X 件未认领，已配店铺：[列出 store_category_map.json 中的店铺名]。  
+> 「采集箱 N 件未认领，已配店铺：[列出 store_category_map.json 中的店铺名]。  
 > 怎么处理？选项：  
 > A. 全部到指定店铺（告诉我店名）  
 > B. 按类目自动分配（需映射表已配好）  
-> C. 先审核看看结果再说」
+> C. 先审核看看结果再说（认领但不发布）  
+> D. 直接发布草稿箱的现有商品（跳过审核认领）」
 
-**依据用户回复走对应方案：**
+### 第2步：按用户选择执行
 
-#### ── 方案A：用户指名店铺 ──
+**🔴🔴🔴 红线（认领前）**
+- 必须先问用户选哪个店铺，**拿到明确答复后才能执行 `--claim-to`**
+- 禁止从 `store_category_map.json` 拿第一个店名就跑了
+- 用户没说店名时追问，不要自己猜
+- 用户说了店名 → 原文提取（含括号、全半角保持一致）传给 `--claim-to`
+
+#### 方案A：全流程（审核→认领→发布到指定店铺）
 ```powershell
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店铺名"
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "用户说的店名"
 ```
-- 店铺名**必须完整一致**（含括号），从 `store_category_map.json` 或从用户说的原文提取
 - 产出：审核→认领→发布全流程
+- 发布阶段**代码会自动**切到该店铺筛选草稿再发，AI 不需额外操作
 
-#### ── 方案B：用户说跑自动分配 ──
+#### 方案B：按类目自动分配
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py
 ```
 - 自动按 `store_category_map.json` 分配
-- 无匹配的商品会打印出来，**等用户回复怎么分配**
-- 如果映射表未配置 → 告诉用户没配，引导用方案A或配表
+- 无匹配的商品会打印出来 → **等用户回复怎么分配**
+- 如果映射表未配 → 告诉用户没配，引导用方案A或找用户配表
 
-#### ── 方案C：用户说先审核 ──
+#### 方案C：先审核认领，不发布
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --skip-publish
 ```
-- 产出审查结果 + 认领，但**不发布**
-- 用户确认后再跑发布
+- 只审+认，不发
+- 用户确认后再跑发布：
+  ```powershell
+  $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --all
+  ```
 
-##### ⚡ `--skip-publish` 之后想继续发：
+#### 方案D：直接发布（跳过审核认领，只发草稿箱现有商品）
 ```powershell
+# 发布某店铺全部草稿
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --all
+
+# 只发指定主货号
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --products 12345,67890
 ```
-（跳过重审，直接发布全部草稿）
-或指定货号：
+- **适用于**：用户已经手动认领好了、或者想重新发布之前认领过的商品
+- **不经过** 采集箱扫描/合规审查/认领，直接到发布页
+
+#### 特殊情况：用户给货源ID
 ```powershell
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --products ID1,ID2
 ```
 
-#### ── 特殊情况：用户给货源ID ──
-```powershell
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publish --products ID1,ID2
-```
+### 第3步：跑完后回复用户
 
-### 4. 跑完后必须做的事
+**必须做的事（逐条）：**
 
-- **读取 `--JSON--` 输出**，解析 `pass_products` 数组，用表格格式回复用户：
-  ```
-  ✅ 通过：3件
-    - [童裝] 主货号(637704645844) 商品名称...
-    - [童裝] 主货号(758357471915) 商品名称...
-  ❌ 拒绝：0件
+1. **等待命令执行完成** — `run_workflow.py` 全流程包含认领后轮询等待同步（最长5分钟），不要中途打断，等它跑完
+2. **读取 `--JSON--` 输出**，解析各字段：
+   - `pass_count` — 通过审查的商品数
+   - `reject_count` — 被拒绝的商品数
+   - `pass_products` — 通过商品数组（含 id / title / category / status）
+   - `claimed_product_ids` — 实际认领成功的商品ID列表
+3. **用表格格式回复用户**：
+   ```
+   ✅ 审核通过：3件
+     - [童裝] 主货号(637704645844) 商品名称...
+     - [五金] 主货号(758357471915) 商品名称...
+   ❌ 拒绝：0件
+   
+   认领到店铺：店铺A（3件）
+   发布结果：3件已提交发布
+   ```
+4. **如果全部被拒（`--JSON--` 无 pass_products）** → 如实告诉用户，不用再问分配
+5. **如果有未匹配的商品留在采集箱**（类目不在映射表中）→ 告诉用户，问怎么处理
+6. **不要替用户做决定** — 用户没说分配方案时，不要私自分
 
-  分配结果：
-    - 店铺A ← 2件（已认领）
-    - 店铺B ← 0件
-    - 未匹配：1件（食品类，留在采集箱）
-  ```
-- **如果有未匹配的（无类目映射表）**：告诉用户商品在哪，问他怎么分配
-- **不要替用户做决定**：用户没说分配方案时，不要私自认领到某个店
+---
+
+## 场景速查表（新AI快速判断）
+
+| 用户说了 | 应该怎么做 |
+|----------|-----------|
+| "跑一遍""审核发布" | 方案A：全流程，问店名或自动分配 |
+| "先看看""先审核" | 方案C：`--skip-publish` |
+| "直接发""发一下草稿" | 方案D：`--publish --all` |
+| "发这3个货号 123,456" | 特殊情况：`--publish --products 123,456` |
+| "帮我采集XX店的东西" | 告知采集模块暂未接入（预留），引导先审采集箱现有商品 |
+| 只说了店名没说要做什么 | 追问用途：审核发布？还是直接发布？ |
+| 店名不确定/括号有差异 | 把映射表中的完整店名发给用户确认，不要自己替换 |
 
 ---
 
@@ -126,23 +168,22 @@ $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店名" --publ
 - **留空 `[]` → 该店被排除在自动分配之外，不会收到任何商品**
 - **完全没出现在映射表中的店铺 → 等同于未配置，也不会收到自动分配**
 - 不在映射表中的类目 → **合规商品**留在采集箱不动（不合规的会被直接删除）
-- 类目由LLM识别，从 `config/category_list.json` 读取（无需改代码）。当前支持：**童裝、五金、百货、3C、服装、食品、美妆、家居、母婴、户外、宠物、其他**。修改该 JSON 即可增减类目
+- 类目由LLM识别，从 `config/category_list.json` 读取（无需改代码）。当前支持的类目：**童裝、五金、百货、3C、服装、食品、美妆、家居、母婴、户外、宠物、其他**。修改该 JSON 即可增减
 
 **如果映射表未配或用户想补全**：
-- 直接问：「你有几家店？分别卖什么品类？我帮你配好映射表」
-- 用 `--add-rule` 也可以动态加
+- 直接问：「你有几家店？分别卖什么品类？我帮你配好」
+- 用 `--add-rule` 也可以动态加规则
 
 ### 手动分配规则（当有无匹配商品时）
 
-用户可以用以下格式回复分配方案：
-- `全部到店铺A` → 全部去一个店
+用户回复格式：
+- `全部到店铺A` → 全部一个店
 - `1到A，2到B` → 按序号分
 - `食品类的到B店` → 按类目分
 - `主货号(123456789)到A店` → 含ID分
 
 **你收到回复后**：
 ```powershell
-# 按分配结果执行对应命令
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店铺A" --publish --products 123456789,987654321
 ```
 
@@ -150,34 +191,37 @@ $env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "店铺A" --pub
 
 ## 常用命令速查
 
-| 命令 | 用途 |
-|------|------|
-| `run_workflow.py --claim-to "店名"` | **全流程：审→认→发** |
-| `run_workflow.py --claim-to "店名" --skip-publish` | 只审+认，不发 |
-| `run_workflow.py --claim-to "店名" --publish --products id1,id2` | 跳过审查，直接发布指定货号 |
-| `run_workflow.py` | 自动分配模式（需配映射表） |
-| `run_workflow.py --add-rule "category:童裝->你的店铺名"` | 动态加分配规则 |
+| 命令 | 用途 | 对应方案 |
+|------|------|----------|
+| `run_workflow.py --claim-to "店名"` | **全流程：审→认→发** | A |
+| `run_workflow.py --claim-to "店名" --skip-publish` | 只审+认，不发 | C |
+| `run_workflow.py --claim-to "店名" --publish --all` | 直接发布全部草稿 | D |
+| `run_workflow.py --claim-to "店名" --publish --products id1,id2` | 直接发布指定货号 | 特殊情况 |
+| `run_workflow.py` | 按映射表自动分配 | B |
+| `run_workflow.py --add-rule "category:童裝->店名"` | 动态加分配规则 | — |
 
 ---
 
-## 错误处理速查
+## 错误处理速查（含 AI 应对）
 
-| 报错 | 原因 | 修复 |
-|------|------|------|
-| `Chrome CDP 无法连接` | Chrome 没以 9223 启动 | 用户参考 SETUP 6.2 |
-| `未找到目标店铺 'XXX'` | 店名不匹配 | 检查 config.yaml / 映射表中的店名 |
-| `无未认领商品` | 采集箱为空 | 用户先去采集 |
-| `认领成功 0 件` | 商品已被认领走或ID不存在 | 检查采集箱 |
-| `stderr: UnicodeEncodeError` | 编码问题 | 代码已有 try/except 兜底 |
-| `--JSON--` 没有 `pass_products` | 全部被拒或无合规商品 | 正常，告诉用户结果 |
+| 现象 | 原因 | AI 应该怎么做 |
+|------|------|--------------|
+| 命令返回 `Chrome CDP 无法连接` | Chrome 没以 9223 启动 | 告诉用户：用 `--remote-debugging-port=9223` 启动 Chrome，参考 SETUP 6.2 |
+| 命令返回 `未找到目标店铺 'XXX'` | 店名不匹配 | 告诉用户：检查 config.yaml / 映射表中的店名和 ERP 弹窗是否完全一致 |
+| 命令返回 `无未认领商品` | 采集箱为空或已全部认领 | 如实告诉用户，问是否需要直接发布（方案D） |
+| 命令返回 `认领成功 0 件` | 商品已被认领走或ID不存在 | 建议用户检查采集箱确认 |
+| `--JSON--` 没有 `pass_products` | 全部被拒或无合规商品 | 告诉用户本次审核结果，无需再操作 |
+| 命令卡住超过10分钟没输出 | 可能超时/Chrome 弹窗拦截 | 告诉用户目前卡住，建议检查 Chrome 窗口是否有弹窗未关，然后重试 |
+| 用户说"发错了/发多了" | 商品已提交发布 | 告知发出去的无法撤回，下次注意；推荐先 `--skip-publish` 预览结果 |
 
 ---
 
-## 完整流程（参考，不需逐行执行）
+## 完整流程（内部逻辑，AI 不需要操作）
 
 ```
 ① 采集箱扫描 → ② LLM审查图片+标题 → ③ 类目识别 → ④ 按映射表分配
-→ ⑤ 勾选认领 → ⑥ 轮询等待同步 → ⑦ 发布 → ⑧ 清理不合格品
+→ ⑤ 勾选认领 → ⑥ 轮询等待同步（最长5分钟） → ⑦ 店名筛选发鬼页 → ⑧ 发布
+→ ⑨ 清理不合格品
 ```
 
-所有子脚本的详细用法见项目内 SKILL.md 和 README.md。
+**AI 只需调 `run_workflow.py`，中间所有步骤脚本自动完成。**
