@@ -53,19 +53,28 @@ def extract_unclaimed_products(page) -> list[dict]:
     """
     from infrastructure.config_loader import ConfigLoader
     _cc_cfg = ConfigLoader().load()
-    # 三重保障导航：慢速+domcontentloaded+重试
-    for _attempt in range(3):
-        try:
-            page.goto(f"{_cc_cfg.erp_url}/member/product/general/collect-box", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(3)
-            page.wait_for_load_state("networkidle", timeout=60000)
-            break
-        except Exception as _e:
-            if _attempt < 2:
-                print(f"  ⚠️ 导航采集箱被中断，第{_attempt+2}次重试...", flush=True)
+    _collect_box_url = f"{_cc_cfg.erp_url}/member/product/general/collect-box"
+
+    # 如果已经在採集箱頁面，直接 reload 代替 goto（避免重複導航超時）
+    if "collect-box" in page.url:
+        print("  ✅ 已在採集箱頁面，執行 reload...")
+        page.reload(wait_until="domcontentloaded", timeout=60000)
+        time.sleep(3)
+        page.wait_for_load_state("networkidle", timeout=60000)
+    else:
+        # 三重保障导航：慢速+domcontentloaded+重试
+        for _attempt in range(3):
+            try:
+                page.goto(_collect_box_url, wait_until="domcontentloaded", timeout=60000)
                 time.sleep(3)
-            else:
-                raise
+                page.wait_for_load_state("networkidle", timeout=60000)
+                break
+            except Exception as _e:
+                if _attempt < 2:
+                    print(f"  ⚠️ 导航采集箱被中断，第{_attempt+2}次重试...", flush=True)
+                    time.sleep(3)
+                else:
+                    raise
 
     # 关闭弹窗
     try:
@@ -233,7 +242,7 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
         title_optimizer = TitleOptimizer(regulation_checker=regulation)
         checker = ComplianceChecker(image_checker, regulation, title_optimizer)
 
-        results = checker.review_batch(products)
+        results = checker.review_batch_concurrent(products, max_workers=3, timeout=120)
 
         # 计算通过/拒绝商品列表
         pass_ids_list = checker.get_pass_ids(results)  # 先计算一次，后续复用
@@ -273,7 +282,8 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
     publisher = ERPPublisher(page=page)
 
     publisher.navigate_to_collection_box()
-    time.sleep(2)
+    page.wait_for_load_state("networkidle", timeout=60000)
+    time.sleep(3)
 
     # 关弹窗
     page.evaluate("""() => {
@@ -292,26 +302,49 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
         }
     }""")
     page.wait_for_load_state("networkidle", timeout=30000)
-    time.sleep(2)
+    time.sleep(3)
 
     # 用 JS 全量勾选 — 边滚动边勾选（解决 vue-recycle-scroller 回收 DOM 的问题）
     from infrastructure.erp_publisher import _get_collect_box_pages, _get_tab_count
     tab_count = _get_tab_count(page)
     pass_id_set = set(str(i) for i in pass_ids)
     
-    # 扩高页面创造滚动空间
-    page.evaluate("""() => {
-        document.body.style.minHeight = "12000px";
-        document.documentElement.style.minHeight = "12000px";
-    }""")
-    page.wait_for_timeout(500)
+    # 检测虚拟滚动引擎（vue-recycle-scroller vs 普通页面滚动），重试直到 scroller 有数据
+    scroller_info = None
+    use_internal_scroll = False
+    for _retry in range(5):
+        scroller_info = page.evaluate("""() => {
+            const s = document.querySelector('.vue-recycle-scroller');
+            if (!s) return null;
+            return {h: s.scrollHeight, ch: s.clientHeight, child: s.children.length};
+        }""")
+        if scroller_info and scroller_info["h"] > scroller_info["ch"]:
+            use_internal_scroll = True
+            break
+        time.sleep(2)
+    
+    if use_internal_scroll:
+        # 引擎①：vue-recycle-scroller 内部滚动
+        max_pos = max(0, scroller_info["h"] - scroller_info["ch"])
+        print(f"  🔧 使用内部滚动引擎: {max_pos}px / {scroller_info['child']}子元素")
+    else:
+        # 引擎②：扩高页面 + window 滚动（兜底）
+        page.evaluate("""() => {
+            document.body.style.minHeight = "12000px";
+            document.documentElement.style.minHeight = "12000px";
+        }""")
+        page.wait_for_timeout(500)
+        print(f"  🔧 使用窗口滚动引擎: 12000px")
     
     # 边滚动边勾选：每次滚动后等 scroller 渲染完再扫描勾选
     check_count = 0
-    prev_checked = 0
     stable_rounds = 0
     for i in range(150):
-        page.evaluate("window.scrollTo(0, %d)" % (i * 80))
+        scroll_pos = i * 80
+        if use_internal_scroll:
+            page.evaluate(f"() => {{ const s = document.querySelector('.vue-recycle-scroller'); if(s) s.scrollTop = {min(scroll_pos, max_pos)}; }}")
+        else:
+            page.evaluate(f"window.scrollTo(0, {scroll_pos})")
         page.wait_for_timeout(250)  # 给 scroller 足够时间渲染新行
         
         cnt = page.evaluate("""(ids) => {

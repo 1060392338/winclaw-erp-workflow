@@ -332,7 +332,7 @@ def main():
         ], timeout=600, retry=1)
     elif args.claim_to:
         stdout, rc = run_script("run_compliance_claim.py", [
-            "--claim-to", args.claim_to
+            "--list-stores"
         ], timeout=600, retry=2)
     else:
         stdout, rc = run_script("run_compliance_claim.py", [
@@ -419,7 +419,7 @@ def main():
                 pids = [p.get('id', '') for p in prods if p.get('id')]
                 if pids:
                     print(f"\n  -> \u8ba4\u9886\u53d1\u5e03\u5230[{s_name}]({len(pids)}\u4ef6)...")
-                    _claim_and_publish_for_store(PROJECT, run_script, s_name, pids, args.skip_publish, skip_claim=bool(args.claim_to))
+                    _claim_and_publish_for_store(PROJECT, run_script, s_name, pids, args.skip_publish, skip_claim=False)
 
         if unassigned:
             print("\n   \u4ee5\u4e0b\u5546\u54c1\u65e0\u5339\u914d\u7684\u5e97\u94fa\u7c7b\u76ee\uff0c\u8bf7\u624b\u52a8\u5206\u914d\uff1a")

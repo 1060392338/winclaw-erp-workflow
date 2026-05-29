@@ -302,9 +302,23 @@ class ERPPublisher:
 
 
 def _get_tab_count(page, tab_text="未认领") -> int:
-    """从tab标签读取计数，如「未认领(10)」→ 10"""
+    """从tab标签读取计数，如「未认领(10)」→ 10
+    
+    双保险策略:
+    1. 先尝试从 body.innerText 正则匹配（最可靠）
+    2. 兜底: 从 DOM 元素 [class*=t-tab] 中提取
+    """
+    import re
+    # 策略1: body 文本匹配
+    body_text = page.evaluate('() => document.body.innerText')
+    pattern = re.escape(tab_text) + r'[（(]\s*(\d+)\s*[）)]'
+    m = re.search(pattern, body_text)
+    if m:
+        return int(m.group(1))
+    
+    # 策略2: DOM元素查询
     count = page.evaluate("""(tab) => {
-        const tabs = document.querySelectorAll('[class*="tab"]');
+        const tabs = document.querySelectorAll('[class*="t-tab"]');
         for (const t of tabs) {
             if (t.textContent.includes(tab)) {
                 const parts = t.textContent.split(tab);
@@ -627,25 +641,27 @@ def _scroll_window_for_all_products(page, tab_count: int, max_scrolls=50) -> lis
     让 scroller 渲染隐藏行。
 
     流程：
-    1. document body+html minHeight=3000px 创造滚动空间
-    2. 每次 window.scrollTo(0, y+=200) 触发 scroller 重渲染
+    1. 动态计算 body minHeight（每件约250px + 保底4000px）创造足够滚动空间
+    2. 每次 window.scrollTo(0, y+=400) 触发 scroller 重渲染
     3. 收集所有行的商品数据，按 ERP ID 去重
-    4. 稳定 15 轮无新商品 → 结束（防止无限循环）
+    4. 稳定 25 轮无新商品 → 结束（防止无限循环）
     5. 恢复页面高度和滚动位置
 
     Returns:
         去重后的商品列表（可能少于 tab_count，差值即虚拟滚动未渲染部分）
     """
-    page.evaluate("""() => {
-        document.body.style.minHeight = "3000px";
-        document.documentElement.style.minHeight = "3000px";
-    }""")
+    # 根据商品数量动态设置页面高度（每件约 250px + 保底 4000px）
+    min_height = max(4000, tab_count * 250 + 500)
+    page.evaluate(f"""() => {{
+        document.body.style.minHeight = "{min_height}px";
+        document.documentElement.style.minHeight = "{min_height}px";
+    }}""")
     page.wait_for_timeout(300)
 
     all_ids = set()
     all_products = []
     stable = 0
-    step = 200
+    step = 400
 
     for i in range(max_scrolls):
         y = i * step
@@ -668,7 +684,7 @@ def _scroll_window_for_all_products(page, tab_count: int, max_scrolls=50) -> lis
 
         if len(all_ids) >= tab_count:
             break
-        if stable > 15:
+        if stable > 25:
             break
 
     # 恢复页面状态
