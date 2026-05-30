@@ -180,7 +180,7 @@ def main():
                 break
 
             # 勾选匹配的行
-            checked = page.evaluate("""(ids, tablerow) => {
+            checked = page.evaluate("""({ids, tablerow}) => {
                 const idSet = new Set(ids);
                 let n = 0;
                 document.querySelectorAll(tablerow).forEach(row => {
@@ -199,7 +199,7 @@ def main():
                     }
                 });
                 return n;
-            }""", visible_ids, SEL.TABLE_ROW)
+            }""", {"ids": visible_ids, "tablerow": SEL.TABLE_ROW})
 
             if checked == 0:
                 break
@@ -208,9 +208,9 @@ def main():
             print(f"  第{rnd}轮: 勾选 {checked} 个 (累计 {total_checked}/{len(target_ids)})", flush=True)
 
             # 产品发布 hover+click
-            page.locator(f"button:has-text(\"\' + \'TXT.BTN_PUBLISH\' + \'\")").first.hover()
+            page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.hover()
             sleep(T.SHORT_SLEEP)
-            page.locator(f"button:has-text(\"\' + \'TXT.BTN_PUBLISH\' + \'\")").first.click()
+            page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.click()
             sleep(1500)
 
             # 立即发布
@@ -245,7 +245,7 @@ def main():
 
                 # 路径B: 保存按钮
                 if "保存" in body:
-                    save = page.locator('.t-dialog__footer button:f"button:has-text(\"保存\")"')
+                    save = page.locator('.t-dialog__footer button:has-text("保存")')
                     if save.count() > 0 and save.first.is_visible():
                         save.first.click()
                         saved_publish = True
@@ -291,9 +291,9 @@ def main():
         print(f"[3/4] 全选: {checked} 件", flush=True)
 
         # 全选路径 → 旧版发布流程
-        page.locator(f"button:has-text(\"\' + \'TXT.BTN_PUBLISH\' + \'\")").first.hover()
+        page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.hover()
         sleep(T.HALF_SECOND)
-        page.locator(f"button:has-text(\"\' + \'TXT.BTN_PUBLISH\' + \'\")").first.click()
+        page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.click()
         sleep(T.TWO_SECONDS)
         page.locator('.t-dropdown__item-text').filter(has_text="立即发布").first.click()
         print("[4/4] 已点立即发布", flush=True)
@@ -323,7 +323,7 @@ def main():
                     sleep(T.HALF_SECOND)
                 continue
             if "保存" in body:
-                save = page.locator('.t-dialog__footer button:f"button:has-text(\"保存\")"')
+                save = page.locator('.t-dialog__footer button:has-text("保存")')
                 if save.count() > 0 and save.first.is_visible():
                     save.first.click()
                     print("  ✅ 保存", flush=True)
