@@ -9,3 +9,7 @@ python-dotenv==1.1.1
 openai==2.37.0
 langchain-openai==1.2.1
 langchain-core==1.4.0
+
+# OCR 加速（可选，不装则走纯 Vision API 兜底，更慢更贵）
+pytesseract==0.3.13
+Pillow==11.1.0

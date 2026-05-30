@@ -1,111 +1,93 @@
-[![Python](https://img.shields.io/badge/python-3.11-blue?logo=python)]()
+[![Python](https://img.shields.io/badge/python-3.12-blue?logo=python)]()
 [![GitHub last commit](https://img.shields.io/github/last-commit/1060392338/winclaw-erp-workflow)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
 # 跨境ERP自动化工作流
 
-> 采集箱审核 → LLM合规+类目识别 → 按映射表自动分店认领 → Shopee发布
+> **采集箱审核 → LLM合规审查 + 类目识别 → 按映射表自动分店认领 → Shopee发布**
 
-## 项目目录
+## 项目结构
 
 ```
-cross-border-erp-agent-new/
-├── run_workflow.py              # ✅ 一键全流程入口
-├── run_compliance_claim.py      # 合规审查 + 类目识别 + 认领到店铺
-├── run_publish.py               # Shopee 批量发布（弹窗双路径）
+winclaw-erp-workflow/
+├── run_workflow.py              # 一键全流程入口（AI只调这个）
+├── run_compliance_claim.py      # 合规审查 + 认领
+├── run_publish.py               # Shopee 批量发布
 ├── store_category_map.json      # 店铺→类目映射表
-├── .claim_state.json            # 运行时自动生成，记录上次审查结果（已 gitignore）
+├── .claim_state.json            # 运行时自动生成（已gitignore）
+│
+├── config/
+│   ├── selectors.py             # ⭐ 集中管理 CSS选择器/UI文案/超时/常量
+│   ├── category_list.json       # 类目 + 关键词 + hard_overrides + vision_risk
+│   └── config.yaml              # ERP地址/CDP端口/店铺列表
 │
 ├── infrastructure/
-│   ├── erp_publisher.py         # ERP核心操作（采集箱/发布页/删除）
-│   ├── browser.py               # Playwright CDP 连接管理
+│   ├── erp_publisher.py         # ERP操作（采集箱/发布/删除）
+│   ├── browser.py               # Playwright CDP 连接
 │   ├── compliance_checker.py    # LLM合规审查
-│   ├── image_checker.py         # 图片视觉检查（qwen3.6-plus）
-│   ├── taiwan_regulation.py     # 台湾广告法规+政治敏感审查
+│   ├── image_checker.py         # OCR + Vision 图片审查
+│   ├── taiwan_regulation.py     # 台湾广告法+政治敏感审查
 │   ├── title_optimizer.py       # 标题优化
-│   ├── llm_client.py            # 统一LLM封装
+│   ├── llm_client.py            # 统一 LLM 封装
 │   └── config_loader.py         # 配置加载
 │
 ├── models/
 │   └── schema.py                # 数据模型
-├── .env                         # API Key / 模型配置
-├── README.md
-├── SKILL.md
-└── requirements.txt
+├── .env                         # API Key（已gitignore）
+└── requirements.txt             # Python 依赖
 ```
 
-## 📖 新手配置
+## 📖 从零配置
 
-完整配置步骤见 **[SETUP_NEW_PC.md](SETUP_NEW_PC.md)**，从零开始：
-1. 安装 Python 3.12 + Chrome
-2. 获取 DeepSeek + 阿里百炼 API Key → 填 `.env`
-3. 修改 `config/config.yaml` 中的店铺名
-4. 配好 `store_category_map.json`（强烈推荐）
-5. 启动 Chrome + 登录 ERP
-6. 一键运行
+完整配置步骤见 **[SETUP_NEW_PC.md](SETUP_NEW_PC.md)**：
+1. Python 3.12 + Chrome
+2. 获取 DeepSeek + 阿里百炼 API Key
+3. 配置 `config/config.yaml` + `store_category_map.json`
+4. 启动 Chrome + 登录 ERP
+5. 一键运行
 
 ## 🚀 一键全流程
 
 ```powershell
-cd C:\Users\Administrator\.openclaw\workspace\cross-border-erp-agent-new
+# 清状态 + 全流程（审查→认领→发布）
 Remove-Item -Force .claim_state.json -ErrorAction SilentlyContinue
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "吉象星連坊（本土）"
 
-# 全部认领到指定店铺
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "你的店铺名"
+# 跳过图片审查（API额度不足）
+$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "吉象星連坊（本土）" --skip-image
 
-# 自动按类目分配（不传 --claim-to，需配好映射表）
+# 按类目自动分配（需配好 store_category_map.json）
 $env:PYTHONIOENCODING='utf-8'; python run_workflow.py
-
-# ⚡先审不发布，退出后想继续发：
-# 方案A：--publish --all 直接发全部草稿（跳过重审）
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "你的店铺名" --publish --all
-# 方案B：--publish --products 指定货号发布
-$env:PYTHONIOENCODING='utf-8'; python run_workflow.py --claim-to "你的店铺名" --publish --products 12345,67890
 ```
 
-## 🔧 完整流程
+## 🔧 全流程说明
 
 ```
-① 合规审查 → ② 自动分配（按映射表） → ③ 认领 → ④ 轮询校验 → ⑤ 发布
+阶段1: 合规审查
+  run_compliance_claim.py --review-only
+  → 采集箱全量扫描 → LLM审查（标题+图片） → 不合规自动删除 → 过审商品留采集箱
+
+阶段2: 分配 + 认领
+  → run_workflow.py 按映射表分配类目
+  → run_compliance_claim.py --direct-claim ID列表 --claim-to 店铺
+  → 逐页扫描认领（claim-and-replace循环）
+
+阶段3: 发布
+  → run_publish.py 店铺名 --products ID列表
+  → 跨页循环勾选+发布
 ```
 
-### 阶段1：合规审查
-- Playwright CDP 连接 Chrome 9223（三重保障导航）
-- 采集箱全量扫描（跨页遍历+双引擎滚动：内部 scroller / window 滚动）
-- LLM审查：图片（qwen3.6-plus）+ 标题（台湾广告法+政治敏感审查）
-- **并发审查**（`max_workers=3`），适合 20+ 商品批量场景
-- ✅ 通过→勾选 / ❌ 拒绝→自动删除（最多5次追删重试）
+## 💡 核心策略
 
-### 阶段2：自动分配
-- 优先级：product_rules > category_rules > store_category_map
-- 匹配类目的商品自动认领发布
-- 不匹配的留在采集箱并提示手动分配
+- **Claim-and-Replace 循环认领**：单页≤20快速通道，多页逐页扫描，翻页后翻回第1页重勾选
+- **config/selectors.py 集中管理**：SEL=CSS选择器/TXT=UI文案/T=超时/C=常量
+- **hard_overrides 硬规则**：关键词强制类目映射（刀→家居）
+- **vision_risk 分级**：低风险类目跳过 Vision 审查
 
-### 阶段3：认领到店铺
-- `--direct-claim` 直接认领指定主货号
-- 认领已完成的（第一阶段）自动跳过
-
-### 阶段4：发布前轮询校验
-- 每10秒查发布页，最长等5分钟
-- 只看发布中/发布成功/发布失败 tab
-
-### 阶段5：发布
-- 选店铺：完整店名精确匹配
-- 按主货号勾选（支持翻页）→ 立即发布
-- 弹窗双路径：未设置类目→跳过→重新保存 / 直接保存
-## 踩过的坑（概要）
-
-- 店铺选择完整店名精确匹配（不用模糊匹配）
-- 发布后只看发布中/发布成功/发布失败（不看草稿箱）
-- `--direct-claim` 不会与第一阶段重复认领
-- GBK编码：设 `$env:PYTHONIOENCODING='utf-8'`
-- 虚拟滚动：双引擎检测（内部 scroller / window 滚动），动态高度计算
-- 导航冲突：已在采集箱页面时用 reload 替代 goto，避免超时
-- 并发审查 max_workers=3，阿里百炼 QPS 限流友好
-
-## 环境依赖
+## 📦 环境依赖
 
 - **Python 3.12**
 - **Chrome**（`--remote-debugging-port=9223`）
-- **依赖**：`pip install -r requirements.txt`（包括 playwright / requests / openai 等）
-- **模型**：.env 配置（当前 image=qwen3.6-plus, light=deepseek-v4-flash）
+- **依赖**：`pip install -r requirements.txt`
+- **Tesseract OCR**（可选，推荐）：详见 SETUP_NEW_PC.md
+- **模型**：DeepSeek（文字）+ 阿里百炼 qwen3-vl-plus（图片）
