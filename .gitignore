@@ -8,9 +8,6 @@
 .claim_state.json
 .preferred_store
 
-# OCR 语言包（100+MB 单机下载，不提交 git）
-tessdata/
-
 # Python
 __pycache__/
 *.pyc
