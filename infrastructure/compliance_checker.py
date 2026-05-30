@@ -8,6 +8,7 @@
 """
 
 import os
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from typing import Callable, Optional
@@ -253,39 +254,119 @@ class ComplianceChecker:
 
             image_compliant = True
 
-        # 2. 审查标题
-        try:
-            title_issues = self.regulation.check_title(product.title)
-        except Exception as e:
-            import logging
-            logging.warning(f"标题检查异常 [{product.title[:30]}]: {e}")
-            title_issues = []
+        # 2. 标题审查 + 类目识别 — 合并为单次LLM调用（减少50% LLM耗时）
+        title_issues = []
+        image_context = f"（图片描述：{image_desc[:100]}）" if image_desc else ""
 
         # 如果跳过了图片审查，image_desc/vision_category 为空
         if skip_image:
             image_desc = ""
             vision_category = ""
 
-        if not title_issues:
-            product.category = self._identify_category(product, image_description=image_desc, vision_category=vision_category)
+        # 先检查硬规则类目覆盖（避免LLM误判 + 可能跳过LLM类目识别）
+        cfg = self._load_category_config()
+        categories = cfg.get("categories", ["其他"])
+        category_list_str = "/".join(categories)
+        hard_overrides = cfg.get("hard_overrides", {})
+        title_lower = product.title.lower()
+        forced_category = None
+        for keyword, forced_cat in hard_overrides.items():
+            if keyword.lower() in title_lower:
+                forced_category = forced_cat
+                print(f"  🔧 硬规则类目: [{keyword}] → [{forced_cat}]", flush=True)
+                break
+
+        # 单次 LLM 调用：同时返回标题合规 + 类目识别
+        category_from_llm = None
+        try:
+            from infrastructure.llm_client import get_llm_client
+            client = get_llm_client()
+            light_model = os.getenv("LLM_LIGHT_MODEL", "deepseek-v4-flash")
+            prompt = f"""你是一位Shopee台湾站商品审查+类目识别专家。执行两项任务：
+
+任务1 - 标题审查：从以下维度审查商品标题是否适合在Shopee台湾站销售：
+1. IP版权侵权：标题是否包含知名IP/品牌名称（如宝可梦/迪士尼/三丽鸥/任天堂等）？
+2. 政治敏感：是否涉及两岸政治敏感内容？
+3. 医疗/药品宣称：是否包含医疗功效宣称（如降血糖/治疗/治愈）且非药品？
+4. 违禁品类：是否为台湾禁止销售的品类（如活体动物/武器/处方药等）？
+5. 广告法违规：是否包含绝对化用语（最/第一/唯一/顶级等）？
+
+任务2 - 类目识别：识别商品属于哪个电商类目（{category_list_str}）
+
+标题：{product.title}
+{image_context}
+
+输出JSON格式：
+{{"compliant": true/false, "issues": ["问题1","问题2"], "category": "类目名称"}}
+如果合规，issues为空列表，category填写类目。如果违规，列出具体问题，category可为空字符串。"""
+            parsed = client.chat_json(
+                messages=[{"role": "system", "content": prompt}, {"role": "user", "content": "请审查以上商品标题并识别类目"}],
+                model=light_model, temperature=0.1,
+            )
+            if isinstance(parsed, dict) and not parsed.get("parse_error"):
+                if not parsed.get("compliant", True):
+                    for iss in parsed.get("issues", []):
+                        title_issues.append(f"[LLM审查] {iss}")
+                else:
+                    cat = parsed.get("category", "")
+                    if cat and not forced_category:
+                        category_from_llm = cat
+                        print(f"  📦 LLM类目: [{cat}]", flush=True)
+        except Exception as e:
+            import logging
+            logging.warning(f"LLM审查异常 [{product.title[:30]}]: {e}")
+
+        # ② 关键词规则检查（独立于LLM，补充检测明确违禁词）
+        try:
+            kw_issues = self.regulation.check_title(product.title)
+            if kw_issues:
+                kw_set = set(kw_issues)
+                llm_set = set(title_issues)
+                for iss in (kw_set - llm_set):
+                    title_issues.append(f"[关键词规则] {iss}")
+        except Exception as e:
+            import logging
+            logging.warning(f"关键词标题检查异常 [{product.title[:30]}]: {e}")
+
+        if title_issues:
+            print(f"  🚫 标题不合规，直接拒绝: {product.title[:40]}...", flush=True)
             return ComplianceResult(
                 product=product,
-                image_compliant=True,  # 跳过图片审查时视为通过
-                title_compliant=True,
+                image_compliant=image_compliant,
+                title_compliant=False,
                 image_issues=[],
-                title_issues=[],
-                final_status="pass",
+                title_issues=title_issues,
+                final_status="reject",
             )
 
-        # 3. 标题违规 -> 直接 reject（不做标题优化）
-        print(f"  🚫 标题不合规，直接拒绝: {product.title[:40]}...", flush=True)
+        # 标题合规 → 确定类目
+        if forced_category:
+            product.category = forced_category
+        elif category_from_llm:
+            # 硬规则后处理（防止LLM误判）
+            for keyword, fc in hard_overrides.items():
+                if keyword.lower() in title_lower and category_from_llm != fc:
+                    print(f"  🔧 LLM判为[{category_from_llm}]，修正为[{fc}]", flush=True)
+                    category_from_llm = fc
+                    break
+            product.category = category_from_llm
+        else:
+            # LLM未返回类目 → 关键词兜底
+            keywords = cfg.get("keywords", {})
+            cat_fallback = "未分类"
+            for cat, kws in keywords.items():
+                if any(k.lower() in title_lower for k in kws):
+                    cat_fallback = cat
+                    break
+            product.category = cat_fallback
+
         return ComplianceResult(
             product=product,
-            image_compliant=image_compliant,  # 使用上面定义的变量
-            title_compliant=False,
+            image_compliant=True,
+            title_compliant=True,
             image_issues=[],
-            title_issues=title_issues,
-            final_status="reject",
+            title_issues=[],
+            final_status="pass",
         )
 
     def _need_vision_check(self, product: Product, image_result) -> bool:

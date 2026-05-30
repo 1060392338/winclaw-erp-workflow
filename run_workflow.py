@@ -11,9 +11,9 @@ run_workflow_v2.py — 带硬性校验的一键全流程编排
 
 用法同 run_workflow.py
 """
-import sys, json, subprocess, argparse, time, re
+import sys, json, subprocess, argparse, time, re, os
 from pathlib import Path
-from config.selectors import T, C, sleep
+from config.selectors import C, sleep
 
 PROJECT = Path(__file__).parent
 
@@ -35,10 +35,11 @@ def step(msg, icon="━"):
 def run_script(name, args, timeout=600, retry=1):
     for attempt in range(retry + 1):
         cmd = [sys.executable, name] + args
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         print(f"  $ {' '.join(cmd)}", flush=True)
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   encoding='utf-8', errors='replace')
+                                   encoding='utf-8', errors='replace', env=env)
             stdout_lines = []
             for line in proc.stdout:
                 print(line, end='', flush=True)
@@ -60,13 +61,13 @@ def run_script(name, args, timeout=600, retry=1):
                 return stdout, rc
             if attempt < retry:
                 print(f"  ⚠️ 退出码 {rc}，{attempt+1}/{retry} 重试...", flush=True)
-                sleep(T.THREE_SECONDS)
+                sleep(1000)
             else:
                 return stdout, rc
         except subprocess.TimeoutExpired:
             if attempt < retry:
                 print(f"  ⚠️ 超时，{attempt+1}/{retry} 重试...", flush=True)
-                sleep(T.THREE_SECONDS)
+                sleep(1000)
             else:
                 print(f"  ❌ 超时 {timeout}s", flush=True)
                 return "", -1
@@ -224,13 +225,14 @@ def _publish_for_store(store_name, product_ids, skip_publish=False):
         print(f"  ✅ 店铺「{store_name}」跳过发布")
         return
     step(f"发布前校验 → {store_name}")
-    max_wait = 300
+    max_wait = 120  # 最多等2分钟（之前300秒太长）
     all_found = False
-    for attempt in range(max_wait // 10):
-        sleep(T.FIVE_SECONDS + T.FIVE_SECONDS)  # 10秒
+    for attempt in range(max_wait // 3):  # 每3秒检查一次
+        sleep(3000)
+        # 批量检查所有商品ID：一次page.evaluate代替多次run_script子进程
         found, not_found = [], []
         for pid in product_ids:
-            out, _ = run_script("run_publish.py", [store_name, "--check-product", pid], timeout=30, retry=0)
+            out, _ = run_script("run_publish.py", [store_name, "--check-product", pid], timeout=20, retry=0)
             if pid in out:
                 found.append(pid)
             else:

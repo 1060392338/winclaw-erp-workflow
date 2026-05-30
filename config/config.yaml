@@ -13,16 +13,18 @@ erp:
 
 # 该ERP账号下绑定的所有店铺
 stores:
-# 店铺列表：请根据你的实际账号修改
-#  api/product/collect/getStores 返回什么就填什么
+# 请根据你的实际ERP账号修改
+# 一个ERP账号可以有多个店铺，每个店一条记录
+# 店铺名必须与ERP认领弹窗完全一致
   - id: "store_1"
-    name: "店铺A"
+    name: "吉象星連坊（本土）"        # ← 改成你的第一个店铺名
     platform: "Shopee"
     region: "TW"
-  - id: "store_2"
-    name: "店铺B"
+  - id: "store_2"                      # 如果有第二个店铺，取消注释并修改
+    name: "店铺B"                      # ← 改成你的第二个店铺名
     platform: "Shopee"
     region: "TW"
+  # 更多店铺照此格式继续添加
 
 # 浏览器配置（跨平台 — Windows/Mac/Linux 自动检测）
 browser:

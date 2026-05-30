@@ -58,13 +58,13 @@ def extract_unclaimed_products(page) -> list[dict]:
     for _attempt in range(3):
         try:
             page.goto(f"{_cc_cfg.erp_url}/member/product/general/collect-box", wait_until="domcontentloaded", timeout=T.NAVIGATION)
-            sleep(T.THREE_SECONDS)
             page.wait_for_load_state("networkidle", timeout=T.NAVIGATION)
+            sleep(400)
             break
         except Exception as _e:
             if _attempt < 2:
                 print(f"  ⚠️ 导航采集箱被中断，第{_attempt+2}次重试...", flush=True)
-                sleep(T.THREE_SECONDS)
+                sleep(400)
             else:
                 raise
 
@@ -78,7 +78,7 @@ def extract_unclaimed_products(page) -> list[dict]:
         }""")
     except Exception:
         pass
-    sleep(T.TWO_SECONDS)
+    sleep(800)
 
     # 切到「未认领」tab（用 JS 避免中文编码问题）
     page.evaluate("""(sel) => {
@@ -88,7 +88,7 @@ def extract_unclaimed_products(page) -> list[dict]:
         }
     }""", SEL.TAB)
     page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
-    sleep(T.THREE_SECONDS)
+    sleep(1000)
 
     # 获取总页数 + tab 权威计数
     total_pages = _get_collect_box_pages(page)
@@ -107,8 +107,8 @@ def extract_unclaimed_products(page) -> list[dict]:
                     if (parseInt(p.textContent) === n) {{ p.click(); return; }}
                 }}
             }})""", pg)
-            page.wait_for_load_state("networkidle", timeout=15000)
-            page.wait_for_timeout(2000)
+            page.wait_for_load_state("networkidle", timeout=10000)
+            page.wait_for_timeout(800)
 
         # 使用 scan_unclaimed_products 做全量扫描（含窗口滚动）
         result = scan_unclaimed_products(page)
@@ -301,23 +301,27 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
         # 删除不合规商品
         if reject_ids:
             print(f"\n  🗑️  删除 {len(reject_ids)} 个不合规商品: {', '.join(reject_ids)}")
-            # 需要先勾选不合规商品才能删除
+            # extract_unclaimed_products() 已在采集箱，仅轻量检查+关弹窗
             publisher = ERPPublisher(page=page)
-            publisher.navigate_to_collection_box()
-            sleep(T.TWO_SECONDS)
-            # 关弹窗
-            page.evaluate("""() => {
-                document.querySelectorAll('[class*="dialog"]').forEach(d => {
-                    const cb = d.querySelector('[class*="close"]');
-                    if (cb && typeof cb.click === 'function') cb.click();
-                });
-            }""")
-            sleep(T.ONE_SECOND)
-            # 切未认领tab
-            from config.selectors import switch_tab
-            switch_tab(page, TXT.TAB_UNCLAIMED)
-            page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
-            sleep(T.TWO_SECONDS)
+            try:
+                page.evaluate("""() => {
+                    document.querySelectorAll('[class*="dialog"]').forEach(d => {
+                        const cb = d.querySelector('[class*="close"]');
+                        if (cb && typeof cb.click === 'function') cb.click();
+                    });
+                }""")
+            except Exception:
+                pass
+            sleep(300)
+            # 确认在未认领tab
+            page.evaluate("""(sel) => {
+                const tabs = document.querySelectorAll(sel);
+                for (const t of tabs) {
+                    if (t.textContent.match(/未认领|鏈棰?/)) { t.click(); return; }
+                }
+            }""", SEL.TAB)
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+            sleep(500)
             try:
                 delete_rejected_products(page, set(reject_ids))
                 state_data["reject_ids"] = []
@@ -352,27 +356,18 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
     print(f"\n[4/5] 勾选 {len(pass_ids)} 个合规商品...")
     publisher = ERPPublisher(page=page)
 
-    publisher.navigate_to_collection_box()
-    sleep(T.TWO_SECONDS)
-
-    # 关弹窗
-    page.evaluate("""() => {
-        document.querySelectorAll('[class*="dialog"]').forEach(d => {
-            const cb = d.querySelector('[class*="close"]');
-            if (cb && typeof cb.click === 'function') cb.click();
-        });
-    }""")
-    sleep(T.ONE_SECOND)
-
-    # 切未认领tab（用 JS 避免中文编码问题）
-    page.evaluate("""(sel) => {
-        const tabs = document.querySelectorAll(sel);
-        for (const t of tabs) {
-            if (t.textContent.match(/未认领|鏈棰?/)) { t.click(); return; }
-        }
-    }""", SEL.TAB)
-    page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
-    sleep(T.TWO_SECONDS)
+    # 注：extract_unclaimed_products() 已导航到采集箱未认领tab，此处不再重复导航
+    # 仅轻量检查—关弹窗确认 Tab 激活状态
+    try:
+        page.evaluate("""() => {
+            document.querySelectorAll('[class*="dialog"]').forEach(d => {
+                const cb = d.querySelector('[class*="close"]');
+                if (cb && typeof cb.click === 'function') cb.click();
+            });
+        }""")
+    except Exception:
+        pass
+    sleep(300)
 
     # ── Claim-and-Replace 循环策略 ──
     # 用户方案：先扫第1页可视行做ID匹配→勾选→认领→认领后已认领商品从「未认领」tab消失
@@ -394,111 +389,85 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
         print(f"  🔄 多页模式: tab计数 {tab_count} > 20，逐页触发+第1页勾选认领")
         print(f"     策略: 第1页可见行匹配→勾选→认领→翻到第2页再翻回→第2页内容填充到第1页→继续")
 
-    # ── 认领循环：逐页扫描，动态调整页数，翻页重试保留勾选ID ──
-    scan_page = 1
-
-    while len(claimed_set) < len(pass_id_set) and scan_page <= 99:
-        total_pages = _get_collect_box_pages(page)
-
-        if scan_page > total_pages:
-            print(f"  ℹ️ 已扫描至第{total_pages}页（共{total_pages}页），结束")
+    # ── 认领策略：展开页面+全量滚动→沿途勾选所有匹配ID→一次性认领 ──
+    # 核心原理：不回到顶部（否则Vue Recycle Scroller销毁已渲染行）
+    # 边滚边勾选，勾选完所有可见target后一次性点击认领
+    for round_no in range(10):
+        if len(claimed_set) >= len(pass_id_set):
             break
 
-        if scan_page > 1:
-            print(f"  📄 翻到第{scan_page}页...")
+        # 翻回第1页（认领按钮只在第1页有效）
+        page.evaluate("""() => {
+            const pages = document.querySelectorAll('.t-pagination__number');
+            for (const p of pages) { if (parseInt(p.textContent) === 1) { p.click(); return; } }
+        }""")
+        page.wait_for_load_state("networkidle", timeout=10000)
+        sleep(500)
+
+        # 展开页面到足够高度
+        scroll_h = max(4000, tab_count * 250)
+        page.evaluate("""(h) => {
+            document.body.style.minHeight = h + "px";
+            document.documentElement.style.minHeight = h + "px";
+        }""", scroll_h)
+        sleep(T.SCROLL_RECOVER)
+
+        # 全量滚动扫描——逐格滚动触发Vue渲染，沿途勾选所有匹配ID
+        # 每个step之间的sleep给Vue Recycle Scroller渲染帧，不能合并成JS循环
+        checked_ids = set()
+        for y in range(0, scroll_h, 200):
+            page.evaluate(f"window.scrollTo(0, {y})")
+            sleep(80)  # 原150ms，给Vue Scroller渲染时间
+
+            found = page.evaluate("""({targets, claimed}) => {
+                const targetSet = new Set(targets);
+                const claimedSet = new Set(claimed);
+                const matched = [];
+                document.querySelectorAll('[class*="virtual-table-tr"]').forEach(row => {
+                    const m = row.textContent.match(/\\u8d27\\u6e90ID[\\uff1a:]\\s*(\\d+)/);
+                    if (m && targetSet.has(m[1]) && !claimedSet.has(m[1])) {
+                        const cb = row.querySelector('input[type="checkbox"]');
+                        if (cb && !cb.checked) {
+                            cb.click();
+                            matched.push(m[1]);
+                        }
+                    }
+                });
+                return matched;
+            }""", {"targets": list(pass_id_set), "claimed": list(claimed_set)})
+
+            if found:
+                checked_ids.update(found)
+                claimed_set.update(found)
+
+        print(f"  全量扫描: 本轮勾选 {len(checked_ids)} 个 (累计 {len(claimed_set)}/{len(pass_id_set)})")
+
+        if not checked_ids:
+            # 没有新勾选的target → 翻页刷新
+            print(f"  第1页无新目标，翻到第2页再翻回触发内容刷新...")
             page.evaluate("""(n) => {
                 const pages = document.querySelectorAll('.t-pagination__number');
-                for (const p of pages) {
-                    if (parseInt(p.textContent) === n) { p.click(); return; }
-                }
-            }""", scan_page)
-            page.wait_for_load_state("networkidle", timeout=15000)
-            sleep(T.TWO_SECONDS)
+                for (const p of pages) { if (parseInt(p.textContent) === n) { p.click(); return; } }
+            }""", 2)
+            page.wait_for_load_state("networkidle", timeout=10000)
+            sleep(500)
+            continue
 
-        # 扩高+全量滚动，触虚拟滚动渲染当前页所有行（解决提取不全）
-        expand_and_scroll(page, height=C.EXPANDED_HEIGHT_PER_PAGE * 2)
+        # 滚回顶部，准备点认领按钮
         page.evaluate("window.scrollTo(0, 0)")
         sleep(T.SCROLL_RECOVER)
 
-        # 在当前页找待认领ID
-        visible_targets = page.evaluate("""({targets, claimed}) => {
-            const targetSet = new Set(targets);
-            const claimedSet = new Set(claimed);
-            const match = [];
-            document.querySelectorAll('[class*="virtual-table-tr"]').forEach(row => {
-                const m = row.textContent.match(/货源ID[：:]\s*(\d+)/);
-                if (m && targetSet.has(m[1]) && !claimedSet.has(m[1])) {
-                    match.push(m[1]);
-                }
-            });
-            return match;
-        }""", {"targets": list(pass_id_set), "claimed": list(claimed_set)})
-
-        if not visible_targets:
-            scan_page += 1
-            continue
-
-        # 勾选 → 认领
-        checked = page.evaluate("""(ids) => {
-            const idSet = new Set(ids);
-            let n = 0;
-            document.querySelectorAll('[class*="virtual-table-tr"]').forEach(row => {
-                const m = row.textContent.match(/货源ID[：:]\s*(\d+)/);
-                if (m && idSet.has(m[1])) {
-                    const cb = row.querySelector('input[type="checkbox"]');
-                    if (cb && !cb.checked) {
-                        cb.click();
-                        n++;
-                    }
-                }
-            });
-            return n;
-        }""", visible_targets)
-
-        print(f"  第{scan_page}页: 勾选 {checked} 个 → 认领...")
-
-        # 点击认领（如果按钮不可用，记住ID翻回第1页重试）
-        claimed_this_round = list(visible_targets)
+        # 点击认领
         publisher.click_claim()
         try:
             page.wait_for_selector(SEL.DIALOG_VISIBLE_ALL, timeout=T.DIALOG_APPEAR)
-            sleep(T.ONE_SECOND)
+            sleep(400)
         except Exception:
-            print(f"  ⚠️ 第{scan_page}页认领按钮不可用，记住ID翻回第1页重试")
-            page.evaluate("""() => {
-                const pages = document.querySelectorAll('.t-pagination__number');
-                for (const p of pages) { if (parseInt(p.textContent) === 1) { p.click(); return; } }
-            }""")
-            page.wait_for_load_state("networkidle", timeout=15000)
-            sleep(T.TWO_SECONDS)
-            # 翻回第1页后重新勾选这批ID
-            rechecked = page.evaluate("""(ids) => {
-                const idSet = new Set(ids);
-                let n = 0;
-                document.querySelectorAll('[class*="virtual-table-tr"]').forEach(row => {
-                    const m = row.textContent.match(/货源ID[：:]\s*(\d+)/);
-                    if (m && idSet.has(m[1])) {
-                        const cb = row.querySelector('input[type="checkbox"]');
-                        if (cb && !cb.checked) { cb.click(); n++; }
-                    }
-                });
-                return n;
-            }""", claimed_this_round)
-            print(f"  ↪ 翻回第1页重新勾选 {rechecked}/{len(claimed_this_round)} 个")
-            publisher.click_claim()
-            try:
-                page.wait_for_selector(SEL.DIALOG_VISIBLE_ALL, timeout=T.DIALOG_APPEAR)
-                sleep(T.ONE_SECOND)
-            except Exception:
-                print("  ⚠️ 翻回第1页后认领仍异常，跳过这批")
-                page.evaluate("""() => {
-                    document.querySelectorAll('[class*="dialog"] [class*="close"]').forEach(c => c.click());
-                }""")
-                sleep(T.ONE_SECOND)
-                continue
+            print(f"  认领弹窗未出现，跳过本轮")
+            continue
 
         # 获取店铺列表（只第一轮取一次）
-        if scan_page == 1 and not stores:
+        if round_no == 0 and not stores:
             stores = publisher.get_store_list_from_modal(max_retries=3)
             result["stores"] = stores
             result["store_listed"] = True
@@ -511,7 +480,7 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
             store_names = [s["store_name"] for s in (stores or [])]
             preferred = PREFERRED_STORE_FILE.read_text(encoding="utf-8").strip() if PREFERRED_STORE_FILE.exists() else ""
             if preferred:
-                result["summary"] = f"合规通过 {len(pass_ids)} 件。上次认领到「{preferred}」，可以继续或用{{换一个新店}}"
+                result["summary"] = f"合规通过 {len(pass_ids)} 件。上次认领到\u300c{preferred}\u300d，可以继续或用{{换一个新店}}"
                 result["preferred_store"] = preferred
             else:
                 result["summary"] = f"合规通过 {len(pass_ids)} 件。可用店铺: {', '.join(store_names)}"
@@ -536,9 +505,9 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
                 return result
             print(f"  → 选择: {chosen['store_name']}")
             publisher.select_store(chosen["store_name"])
-            sleep(T.HALF_SECOND)
+            sleep(200)
             publisher.confirm_claim()
-            sleep(T.TWO_SECONDS)
+            sleep(800)
 
         # 关弹窗
         try:
@@ -546,15 +515,19 @@ def run_compliance_and_claim(page, claim_store: str = "", dry_run: bool = False,
                 const closes = document.querySelectorAll(closeSel);
                 for (const c of closes) { if(c.offsetParent !== null) c.click(); }
             }""", SEL.DIALOG_CLOSE + ', [class*="dialog"] [class*="close"]')
-            sleep(T.HALF_SECOND)
+            sleep(200)
         except Exception:
             pass
 
-        claimed_set.update(claimed_this_round)
-        print(f"  ✅ 第{scan_page}页完成，累计认领: {len(claimed_set)}/{len(pass_id_set)}")
+        print(f"  ✅ 第{round_no+1}轮完成，累计认领: {len(claimed_set)}/{len(pass_id_set)}")
 
-        # 认领后不跳页，让循环重新扫当前页（已认领消失后后续页自动填充）
-        # 但如果当前页已无目标，scan_page保持当前值，下次循环会扫同一页
+        # 恢复页面
+        page.evaluate("""() => {
+            window.scrollTo(0, 0);
+            document.body.style.minHeight = "";
+            document.documentElement.style.minHeight = "";
+        }""")
+        sleep(T.SCROLL_RECOVER)
 
     # 认领循环结束，汇总结果
     check_count = len(claimed_set)

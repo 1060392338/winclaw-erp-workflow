@@ -53,13 +53,13 @@ class ERPPublisher:
                 # 先用 wait_until=domcontentloaded 减少导航冲突窗口
                 self.page.goto(self.get_collect_box_url(), wait_until="domcontentloaded", timeout=T.NAVIGATION)
                 # 等渲染稳定后再等网络空闲
-                sleep(T.THREE_SECONDS)
+                sleep(1000)
                 self.page.wait_for_load_state("networkidle", timeout=T.NAVIGATION)
                 break
             except Exception as e:
                 if attempt < max_retry - 1:
                     print(f"  ⚠️ 导航采集箱被中断，第{attempt+2}次重试...", flush=True)
-                    sleep(T.TWO_SECONDS)
+                    sleep(800)
                 else:
                     raise
 
@@ -418,7 +418,7 @@ class ERPPublisher:
 def _get_tab_count(page, tab_text=TXT.TAB_UNCLAIMED) -> int:
     """从tab标签读取计数，如「未认领(10)」→ 10"""
     count = page.evaluate("""(tab) => {
-        const tabs = document.querySelectorAll('[class*="t-tab"]');
+        const tabs = document.querySelectorAll('[class*="t-tab"],[class*="radio-button"]');
         for (const t of tabs) {
             if (t.textContent.includes(tab)) {
                 const parts = t.textContent.split(tab);
@@ -515,7 +515,7 @@ def _check_ids_via_window_scroll(page, reject_ids: list) -> int:
         document.body.style.minHeight = "6000px";
         document.documentElement.style.minHeight = "6000px";
     }""")
-    sleep(T.HALF_SECOND)
+    sleep(200)
 
     for i in range(C.MAX_SCROLL_STEPS):
         page.evaluate("window.scrollTo(0, %d)" % (i * 150))
@@ -588,7 +588,7 @@ def delete_rejected_products(page, reject_ids: list[str]) -> int:
         # 导航到采集箱
         page.goto(ERPPublisher.get_collect_box_url())
         page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
-        sleep(T.TWO_SECONDS)
+        sleep(800)
 
         # 关弹窗
         page.evaluate("""() => {
@@ -597,7 +597,7 @@ def delete_rejected_products(page, reject_ids: list[str]) -> int:
                 if (c && typeof c.click === 'function') c.click();
             });
         }""")
-        sleep(T.HALF_SECOND)
+        sleep(200)
 
         # 切到未认领 tab（JS避免中文编码问题）
         page.evaluate("""() => {
@@ -607,25 +607,25 @@ def delete_rejected_products(page, reject_ids: list[str]) -> int:
             }
         }""")
         page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
-        sleep(T.TWO_SECONDS)
+        sleep(800)
 
         # 循环：先全量展开触发虚拟滚动渲染，再扫第1页
         # 删完后续页自动填充到第1页
         for loop in range(max_rounds):
-            # 展开页面高度+全量滚动，触发虚拟滚动渲染全部行到DOM
+            # 展开页面高度+逐格滚动，触发虚拟滚动渲染全部行到DOM
+            scroll_h = 40000
             page.evaluate("""(h) => {
                 document.body.style.minHeight = h + "px";
                 document.documentElement.style.minHeight = h + "px";
                 window.scrollTo(0, 0);
-            }""", 80000)
-            sleep(T.HALF_SECOND)
-            page.evaluate("""() => {
-                for (let y = 0; y < 80000; y += 200) {
-                    window.scrollTo(0, y);
-                }
-                window.scrollTo(0, 0);
-            }""")
-            sleep(T.HALF_SECOND)
+            }""", scroll_h)
+            sleep(200)
+            # 逐格滚动 — 每个step给Vue Scroller渲染帧，不能合并成JS同步循环
+            for y in range(0, scroll_h, 300):
+                page.evaluate(f"window.scrollTo(0, {y})")
+                sleep(80)
+            page.evaluate("window.scrollTo(0, 0)")
+            sleep(200)
 
             # 扫第1页可视行，找仍然存在的reject_ids
             still_visible = page.evaluate("""({rejectSet, deletedSet}) => {
@@ -682,7 +682,7 @@ def delete_rejected_products(page, reject_ids: list[str]) -> int:
             }""", TXT.BTN_DELETE)
 
             # 确认弹窗
-            sleep(T.ONE_SECOND)
+            sleep(400)
             confirmed = page.evaluate("""(confirmText) => {
                 const btns = document.querySelectorAll('[class*="dialog"] button, button');
                 for (const btn of btns) {
@@ -702,7 +702,7 @@ def delete_rejected_products(page, reject_ids: list[str]) -> int:
                     if (c.offsetParent !== null && typeof c.click === 'function') c.click();
                 }
             }""")
-            sleep(T.HALF_SECOND)
+            sleep(200)
 
             if confirmed:
                 deleted_set.update(still_visible)
@@ -800,7 +800,7 @@ def _scroll_window_for_all_products(page, tab_count: int, max_scrolls=50) -> lis
     for i in range(max_scrolls):
         y = i * step
         page.evaluate("window.scrollTo(0, %d)" % y)
-        sleep(T.HALF_SECOND)
+        sleep(200)
 
         products = _extract_visible_products(page)
         added = 0

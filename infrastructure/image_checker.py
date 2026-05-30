@@ -6,8 +6,23 @@
 """
 
 import os
+from pathlib import Path
 from dataclasses import dataclass, field
 from infrastructure.taiwan_regulation import TaiwanRegulation
+
+
+def _locate_tessdata() -> str:
+    """查找可用的 tessdata 目录 — 项目目录 > 用户目录 > 安装目录"""
+    project_tess = str(Path(__file__).resolve().parent.parent / "tessdata")
+    candidates = [
+        project_tess,                                              # ① 项目目录
+        os.path.join(os.path.expanduser("~"), "tessdata"),         # ② 用户目录
+        r"C:\Program Files\Tesseract-OCR\tessdata",                # ③ 安装目录
+    ]
+    for d in candidates:
+        if os.path.isfile(os.path.join(d, "chi_sim.traineddata")):
+            return d
+    return candidates[-1]
 
 
 @dataclass
@@ -126,10 +141,8 @@ class ImageChecker:
 
     # Tesseract 可执行文件路径（Windows 默认安装位置）
     _TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-    # 语言包目录：优先用户目录（避免 Program Files 写入权限问题），回退到安装目录
-    _TESSDATA_PREFIX = os.path.join(os.path.expanduser("~"), "tessdata") if os.path.isdir(
-        os.path.join(os.path.expanduser("~"), "tessdata", "chi_sim.traineddata").replace("\\", os.sep)
-    ) else r"C:\Program Files\Tesseract-OCR\tessdata"
+    # 语言包目录：项目目录 > 用户目录 > 安装目录（三级优先，模块级函数计算）
+    _TESSDATA_PREFIX = _locate_tessdata()
 
     def _ocr_image(self, url: str) -> dict:
         """对单张图片执行OCR"""

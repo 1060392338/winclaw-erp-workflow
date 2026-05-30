@@ -173,8 +173,8 @@ class T:
     # ── 虚拟滚动 ──
     SCROLL_RENDER = 1_000        # 扩高后等待渲染
     SCROLL_STEP_WAIT = 500       # 每步滚动后等待
-    SCROLL_FAST = 150            # 快速滚动
-    SCROLL_RECOVER = 300         # 恢复页面后等待
+    SCROLL_FAST = 80             # 快速滚动
+    SCROLL_RECOVER = 100         # 恢复页面后等待
     
     # ── 通用 ──
     SHORT_SLEEP = 300            # 300ms

@@ -45,9 +45,9 @@ def main():
                 if txt == store:
                     tags2.nth(i).click()
                     break
-            sleep(T.HALF_SECOND)
+            sleep(200)
             page2.locator('button:has-text("查询")').first.click()
-            sleep(T.THREE_SECONDS)
+            sleep(1000)
 
         # 逐tab查找：只看发布中/发布成功/发布失败（不看草稿箱）
         found = False
@@ -55,7 +55,7 @@ def main():
             tab = page2.locator(f'text={tab_text}').first
             if tab.count() > 0:
                 tab.click()
-                sleep(T.TWO_SECONDS)
+                sleep(800)
                 body2 = page2.evaluate('document.body.innerText')
                 if check_pid in body2:
                     found = True
@@ -83,12 +83,12 @@ def main():
 
     # 导航到发布页
     page.goto(f"{_cfg.erp_url}/member/product/shopee/publish", wait_until="networkidle", timeout=T.NETWORK_IDLE)
-    sleep(T.PUBLISH_INITIAL)  # 关键：等足5秒确保弹窗组件就绪
+    sleep(2000)  # 等弹窗组件就绪
     print("[1/4] 导航完成", flush=True)
 
     # 切草稿箱
     page.locator('text=草稿箱').first.click()
-    sleep(T.TWO_SECONDS)
+    sleep(800)
     print("[2/4] 草稿箱", flush=True)
 
     # 选店铺 — 统一用模糊匹配（精确匹配已废弃：tag-group分组定位不可靠）
@@ -125,9 +125,9 @@ def main():
     
     if not target_clicked:
         print(f"  ⚠️ 未找到店铺 [{store}]（精确+模糊均未命中）", flush=True)
-    sleep(T.HALF_SECOND)
+    sleep(200)
     page.locator('button:has-text("查询")').first.click()
-    sleep(4000)
+    sleep(1500)
 
     if target_ids:
         # 按ID匹配勾选 — 用 claim-and-replace 循环策略（支持跨页）
@@ -209,13 +209,13 @@ def main():
 
             # 产品发布 hover+click
             page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.hover()
-            sleep(T.SHORT_SLEEP)
+            sleep(100)
             page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.click()
-            sleep(1500)
+            sleep(600)
 
             # 立即发布
             page.locator('.t-dropdown__item-text').filter(has_text="立即发布").first.click()
-            sleep(T.ONE_SECOND)
+            sleep(400)
 
             # 处理弹窗
             saved_publish = False
@@ -235,12 +235,12 @@ def main():
                                 }
                             }
                         }""")
-                    sleep(T.TWO_SECONDS)
+                    sleep(800)
                     for _ in range(10):
                         body2 = page.evaluate('document.body.innerText')
                         if "保存" in body2 and '跳过' not in body2:
                             break
-                        sleep(T.HALF_SECOND)
+                        sleep(200)
                     continue
 
                 # 路径B: 保存按钮
@@ -249,14 +249,14 @@ def main():
                     if save.count() > 0 and save.first.is_visible():
                         save.first.click()
                         saved_publish = True
-                        sleep(T.TWO_SECONDS)
+                        sleep(800)
                         break
 
-                sleep(T.HALF_SECOND)
+                sleep(200)
 
             # 从 remaining 中移除本轮已发布的ID
             remaining -= set(visible_ids)
-            sleep(1500)  # 等页面刷新，后续页填充到第1页
+            sleep(800)  # 等页面刷新，后续页填充到第1页
 
         print(f"[3/4] 勾选+发布: {total_checked} 件", flush=True)
         saved = saved_publish
@@ -273,7 +273,7 @@ def main():
                     var pages = document.querySelectorAll('.t-pagination__number');
                     for(var p of pages){if(parseInt(p.textContent)===n){p.click();return;}}
                 }""", pg)
-                sleep(T.THREE_SECONDS)
+                sleep(1000)
             cnt = page.evaluate("""(tablerow) => {
                 var rows = document.querySelectorAll(tablerow);
                 var n = 0;
@@ -287,14 +287,14 @@ def main():
             checked += cnt
         print(f"[3/4] 全选: {checked} 件", flush=True)
 
-        sleep(T.HALF_SECOND)
+        sleep(200)
         print(f"[3/4] 全选: {checked} 件", flush=True)
 
         # 全选路径 → 旧版发布流程
         page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.hover()
-        sleep(T.HALF_SECOND)
+        sleep(200)
         page.locator(f'button:has-text("{TXT.BTN_PUBLISH}")').first.click()
-        sleep(T.TWO_SECONDS)
+        sleep(800)
         page.locator('.t-dropdown__item-text').filter(has_text="立即发布").first.click()
         print("[4/4] 已点立即发布", flush=True)
 
@@ -315,12 +315,12 @@ def main():
                             }
                         }
                     }""")
-                sleep(T.TWO_SECONDS)
+                sleep(800)
                 for _ in range(10):
                     body2 = page.evaluate('document.body.innerText')
                     if "保存" in body2 and '跳过' not in body2:
                         break
-                    sleep(T.HALF_SECOND)
+                    sleep(200)
                 continue
             if "保存" in body:
                 save = page.locator('.t-dialog__footer button:has-text("保存")')
@@ -328,9 +328,9 @@ def main():
                     save.first.click()
                     print("  ✅ 保存", flush=True)
                     saved = True
-                    sleep(T.TWO_SECONDS)
+                    sleep(800)
                     break
-            sleep(T.HALF_SECOND)
+            sleep(200)
 
         if not saved:
             print("  ⚠️ 未找到保存按钮", flush=True)
@@ -349,7 +349,7 @@ def main():
             print(f"  发布确认: {found}/{len(check_ids)} 在发布中", flush=True)
             if found < len(check_ids):
                 page.locator('text=草稿箱').first.click()
-                sleep(T.TWO_SECONDS)
+                sleep(800)
                 body_draft = page.evaluate('document.body.innerText')
                 missing = [pid for pid in check_ids if pid not in body_now and pid in body_draft]
                 if missing:
