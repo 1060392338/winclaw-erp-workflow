@@ -5,6 +5,7 @@
 - qwe3.6plus Vision → 分析商品形象合规性，兜底OCR置信度不足
 """
 
+import os
 from dataclasses import dataclass, field
 from infrastructure.taiwan_regulation import TaiwanRegulation
 
@@ -42,8 +43,16 @@ class ImageChecker:
         self.confidence_threshold = ocr_confidence_threshold
         self.regulation = TaiwanRegulation()
 
-    def check(self, image_urls: list[str]) -> ImageCheckResult:
-        """检查商品图片合规性"""
+    def check(self, image_urls: list[str], vision_mode: str = "auto") -> ImageCheckResult:
+        """检查商品图片合规性
+
+        Args:
+            image_urls: 图片URL列表
+            vision_mode: Vision调用策略
+                - "auto": 原有逻辑（OCR置信度不足时自动调Vision）
+                - "ocr_only": 只做OCR，不调Vision（供分层策略使用）
+                - "always": OCR + 强制调Vision
+        """
         if not image_urls:
             return ImageCheckResult(compliant=True, issues=[])
 
@@ -63,8 +72,15 @@ class ImageChecker:
 
         combined_text = " | ".join(filter(None, ocr_text_all))
 
-        # OCR置信度不足 → 走Vision兜底（有有效URL才调）
-        if (lowest_confidence < self.confidence_threshold or not combined_text) and valid_urls:
+        # Vision调用逻辑（根据vision_mode控制）
+        need_vision = False
+        if vision_mode == "always" and valid_urls:
+            need_vision = True
+        elif vision_mode == "auto" and (lowest_confidence < self.confidence_threshold or not combined_text) and valid_urls:
+            need_vision = True
+        # vision_mode == "ocr_only" 时不调Vision
+
+        if need_vision:
             vision_result = self._vision_check(valid_urls)
             if vision_result.get("issues"):
                 issues.extend(vision_result["issues"])
@@ -108,10 +124,23 @@ class ImageChecker:
             raise ValueError(f"图片过大: {content_length} bytes")
         return resp
 
+    # Tesseract 可执行文件路径（Windows 默认安装位置）
+    _TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    # 语言包目录：优先用户目录（避免 Program Files 写入权限问题），回退到安装目录
+    _TESSDATA_PREFIX = os.path.join(os.path.expanduser("~"), "tessdata") if os.path.isdir(
+        os.path.join(os.path.expanduser("~"), "tessdata", "chi_sim.traineddata").replace("\\", os.sep)
+    ) else r"C:\Program Files\Tesseract-OCR\tessdata"
+
     def _ocr_image(self, url: str) -> dict:
         """对单张图片执行OCR"""
         try:
             import pytesseract
+            import os
+            # 确保 tesseract_cmd 指向正确的可执行文件
+            if os.path.isfile(self._TESSERACT_CMD):
+                pytesseract.pytesseract.tesseract_cmd = self._TESSERACT_CMD
+            if os.path.isdir(self._TESSDATA_PREFIX):
+                os.environ.setdefault("TESSDATA_PREFIX", self._TESSDATA_PREFIX)
             from PIL import Image
             import io
 

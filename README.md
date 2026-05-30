@@ -1,3 +1,7 @@
+[![Python](https://img.shields.io/badge/python-3.11-blue?logo=python)]()
+[![GitHub last commit](https://img.shields.io/github/last-commit/1060392338/winclaw-erp-workflow)]()
+[![License](https://img.shields.io/badge/license-MIT-green)]()
+
 # 跨境ERP自动化工作流
 
 > 采集箱审核 → LLM合规+类目识别 → 按映射表自动分店认领 → Shopee发布

@@ -72,20 +72,20 @@ class BrowserManager:
                 f"或通过 --cdp-port 参数指定端口。"
             ) from last_error
 
-        # 优先复用已有採集箱頁面（用户已在用），避免重新導航
+        # 获取或创建主页面 — 优先使用采集箱页面（用户可能打开了多个标签页）
         contexts = self.browser.contexts
-        self.page = None
-        if contexts:
-            for _p in contexts[0].pages:
-                if "collect-box" in _p.url:
-                    self.page = _p
-                    print(f"  ✅ 复用採集箱頁面: {_p.url[:80]}")
+        if contexts and contexts[0].pages:
+            # 找包含collect-box的页面，避免连到其他无关标签页
+            pages = contexts[0].pages
+            self.page = None
+            for p in pages:
+                if "collect-box" in p.url:
+                    self.page = p
                     break
-        if not self.page:
-            if contexts:
-                self.page = contexts[0].new_page()
-            else:
-                self.page = self.browser.new_context().new_page()
+            if not self.page:
+                self.page = pages[0]  # 没找到就用第一个
+        else:
+            self.page = contexts[0].new_page() if contexts else self.browser.new_context().new_page()
 
         # 创建CDP session
         self.cdp_session = self.page.context.new_cdp_session(self.page)

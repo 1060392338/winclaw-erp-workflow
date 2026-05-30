@@ -40,6 +40,7 @@ class ComplianceChecker:
         max_workers: int = 5,
         timeout: float = 60,
         on_progress: Optional[Callable[[int, int, str], None]] = None,
+        skip_image: bool = False,
     ) -> list[ComplianceResult]:
         """并发批量合规审查
 
@@ -57,7 +58,7 @@ class ComplianceChecker:
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._review_one_safe, p, timeout): i
+                executor.submit(self._review_one_safe, p, timeout, skip_image): i
                 for i, p in enumerate(products)
             }
 
@@ -92,11 +93,11 @@ class ComplianceChecker:
 
     # ─── 内部实现 ───
 
-    def _review_one_safe(self, product: Product, timeout: float) -> ComplianceResult:
+    def _review_one_safe(self, product: Product, timeout: float, skip_image: bool = False) -> ComplianceResult:
         """带超时保护的单商品审查"""
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self._review_one, product)
+            future = pool.submit(self._review_one, product, skip_image)
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
@@ -135,6 +136,14 @@ class ComplianceChecker:
         categories = cfg.get("categories", ["其他"])
         category_list_str = "/".join(categories)
 
+        # P2 修复：先做硬规则覆盖（LLM之前）。以标题开头匹配为主，避免"宝宝辅食刀具"被LLM判为"母婴"
+        hard_overrides = cfg.get("hard_overrides", {})
+        title_lower = product.title.lower()
+        for keyword, forced_cat in hard_overrides.items():
+            if keyword.lower() in title_lower:
+                print(f"  🔧 硬规则命中: [{keyword}] → [{forced_cat}] (标题中含「{keyword}」)", flush=True)
+                return forced_cat
+
         try:
             from infrastructure.llm_client import get_llm_client
             import os
@@ -149,51 +158,102 @@ class ComplianceChecker:
                 model=light_model, temperature=0.1,
             )
             if isinstance(result, dict) and result.get("category"):
-                return result["category"]
+                llm_cat = result["category"]
+                # P2 修复：LLM结果也过一道硬规则后处理（防止LLM误判）
+                for keyword, forced_cat in hard_overrides.items():
+                    if keyword.lower() in title_lower:
+                        if llm_cat != forced_cat:
+                            print(f"  🔧 LLM判为[{llm_cat}]，硬规则修正为[{forced_cat}]（标题含「{keyword}」）", flush=True)
+                            return forced_cat
+                return llm_cat
         except Exception:
             pass
 
         # 关键词兜底（从配置文件读取，不硬编码）
-        title = product.title.lower()
         keywords = cfg.get("keywords", {})
         for cat, kws in keywords.items():
-            if any(k.lower() in title for k in kws):
+            if any(k.lower() in title_lower for k in kws):
                 return cat
         return "未分类"
 
-    def _review_one(self, product: Product) -> ComplianceResult:
+    def _review_one(self, product: Product, skip_image: bool = False) -> ComplianceResult:
         """审查单个商品
 
         红线逻辑：
         1. 图片不合规 -> 直接 reject，不审标题
         2. 图片合规 + 标题合规 -> pass
-        3. 图片合规 + 标题违规 -> LLM优化标题 -> title_optimized
+        3. 图片合规 + 标题违规 -> reject（不做标题优化）
+
+        分层Vision策略（skip_image=False时生效）：
+        - 先做OCR，OCR发现违规文字 → 直接reject（不调Vision）
+        - OCR通过 + 低风险类目（五金/3C/百货/户外/宠物/家居） → 跳过Vision
+        - OCR通过 + 高风险类目（服装/母婴/食品/美妆） → 必须走Vision
+        - OCR置信度不足（<0.8） → 走Vision兜底（不论类目）
         """
-        # 1. 图片检查 - 第一道关
-        try:
-            image_result = self.image_checker.check(product.image_urls)
-        except Exception as e:
-            import logging
-            logging.warning(f"图片检查异常 [{product.title[:30]}]: {e}")
-            return ComplianceResult(
-                product=product,
-                image_compliant=False,
-                title_compliant=False,
-                image_issues=[f"图片检查失败: {e}"],
-                final_status="reject",
-            )
+        image_result = None
+        image_compliant = True  # skip_image时默认True（跳过=视为通过），未跳过时后续覆盖
+        image_issues = []
+        image_desc = ""
+        vision_category = ""
 
-        if not image_result.compliant:
-            return ComplianceResult(
-                product=product,
-                image_compliant=False,
-                title_compliant=False,
-                image_issues=image_result.issues,
-                title_issues=[],
-                final_status="reject",
-            )
+        if not skip_image:
+            # 1. 图片检查 - 第一道关（先只做OCR，不自动调Vision）
+            try:
+                image_result = self.image_checker.check(product.image_urls, vision_mode="ocr_only")
+            except Exception as e:
+                import logging
+                logging.warning(f"图片检查异常 [{product.title[:30]}]: {e}")
+                return ComplianceResult(
+                    product=product,
+                    image_compliant=False,
+                    title_compliant=False,
+                    image_issues=[f"图片检查失败: {e}"],
+                    final_status="reject",
+                )
 
-        # 2. 图片通过 -> 审查标题
+            # OCR发现违规 → 直接reject
+            if not image_result.compliant:
+                return ComplianceResult(
+                    product=product,
+                    image_compliant=False,
+                    title_compliant=False,
+                    image_issues=image_result.issues,
+                    title_issues=[],
+                    final_status="reject",
+                )
+
+            # OCR通过，判断是否需要Vision
+            need_vision = self._need_vision_check(product, image_result)
+            if need_vision:
+                # 走Vision（用 image_checker 的 always 模式重跑一次，确保Vision被调用）
+                try:
+                    image_result = self.image_checker.check(product.image_urls, vision_mode="always")
+                    if not image_result.compliant:
+                        return ComplianceResult(
+                            product=product,
+                            image_compliant=False,
+                            title_compliant=False,
+                            image_issues=image_result.issues,
+                            title_issues=[],
+                            final_status="reject",
+                        )
+                    image_desc = image_result.vision_summary
+                    vision_category = image_result.vision_category
+                except Exception as e:
+                    import logging
+                    logging.warning(f"Vision检查异常 [{product.title[:30]}]: {e}")
+                    # Vision异常时，使用OCR结果继续（不因Vision异常而拒绝）
+                    image_desc = getattr(image_result, 'vision_summary', '')
+                    vision_category = getattr(image_result, 'vision_category', '')
+            else:
+                # 跳过Vision — 低风险类目，OCR已通过
+                print(f"  ⏩ 跳过Vision: OCR已通过 + 低风险类目 [{product.title[:40]}]", flush=True)
+                image_desc = getattr(image_result, 'vision_summary', '')
+                vision_category = getattr(image_result, 'vision_category', '')
+
+            image_compliant = True
+
+        # 2. 审查标题
         try:
             title_issues = self.regulation.check_title(product.title)
         except Exception as e:
@@ -201,14 +261,16 @@ class ComplianceChecker:
             logging.warning(f"标题检查异常 [{product.title[:30]}]: {e}")
             title_issues = []
 
-        image_desc = getattr(image_result, 'vision_summary', '')
-        vision_category = getattr(image_result, 'vision_category', '')
+        # 如果跳过了图片审查，image_desc/vision_category 为空
+        if skip_image:
+            image_desc = ""
+            vision_category = ""
 
         if not title_issues:
             product.category = self._identify_category(product, image_description=image_desc, vision_category=vision_category)
             return ComplianceResult(
                 product=product,
-                image_compliant=True,
+                image_compliant=True,  # 跳过图片审查时视为通过
                 title_compliant=True,
                 image_issues=[],
                 title_issues=[],
@@ -219,12 +281,60 @@ class ComplianceChecker:
         print(f"  🚫 标题不合规，直接拒绝: {product.title[:40]}...", flush=True)
         return ComplianceResult(
             product=product,
-            image_compliant=True,
+            image_compliant=image_compliant,  # 使用上面定义的变量
             title_compliant=False,
             image_issues=[],
             title_issues=title_issues,
             final_status="reject",
         )
+
+    def _need_vision_check(self, product: Product, image_result) -> bool:
+        """判断是否需要调用 LLM Vision
+
+        决策逻辑：
+        1. OCR 置信度不足 (<0.8) → 必须走 Vision（不论类目）
+        2. 高风险类目（服装/母婴/食品/美妆）→ 走 Vision
+        3. 低/中风险类目 + OCR 通过 → 跳过 Vision
+        """
+        # OCR 置信度不足 → 必须走 Vision
+        if image_result.ocr_confidence < 0.8:
+            print(f"  🔍 OCR置信度低({image_result.ocr_confidence:.0%}) → 走Vision", flush=True)
+            return True
+
+        # 从配置文件读取 vision_risk 等级
+        cfg = self._load_category_config()
+        vision_risk = cfg.get("vision_risk", {})
+
+        # 先识别类目（用关键词快速判断，避免额外LLM调用）
+        title_lower = product.title.lower()
+        identified_category = "未分类"
+
+        # 硬规则优先
+        hard_overrides = cfg.get("hard_overrides", {})
+        for keyword, forced_cat in hard_overrides.items():
+            if keyword.lower() in title_lower:
+                identified_category = forced_cat
+                break
+
+        # 关键词匹配
+        if identified_category == "未分类":
+            keywords = cfg.get("keywords", {})
+            for cat, kws in keywords.items():
+                if any(k.lower() in title_lower for k in kws):
+                    identified_category = cat
+                    break
+
+        risk_level = vision_risk.get(identified_category, "medium")
+
+        if risk_level == "high":
+            print(f"  🔍 高风险类目[{identified_category}] → 走Vision", flush=True)
+            return True
+        elif risk_level == "low":
+            return False
+        else:
+            # medium: 中风险，走Vision以防万一
+            print(f"  🔍 中风险类目[{identified_category}] → 走Vision", flush=True)
+            return True
 
     def get_pass_ids(self, results: list[ComplianceResult]) -> list[str]:
         """提取pass商品的ERP ID列表"""

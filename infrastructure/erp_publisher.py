@@ -9,6 +9,8 @@
 """
 
 from playwright.sync_api import Page
+from config.selectors import SEL, TXT, T, C, close_dialogs, switch_tab, expand_and_scroll, recover_page, wait_visible, wait_dialog, sleep
+from config.selectors import SEL, TXT, T, C, close_dialogs, switch_tab, expand_and_scroll, recover_page, wait_visible, wait_dialog, sleep
 
 
 class ERPPublisher:
@@ -25,13 +27,13 @@ class ERPPublisher:
         return ConfigLoader().load().erp_url + "/member/product/general/collect-box"
 
     # TDesign 选择器（2026-05-17 ERP实测验证）
-    DIALOG_BODY = ".t-dialog__body"
-    DIALOG_FOOTER = ".t-dialog__footer"
-    DIALOG_CLOSE = ".t-dialog__close"          # 关闭按钮
+    DIALOG_BODY = SEL.DIALOG_BODY
+    DIALOG_FOOTER = SEL.DIALOG_FOOTER
+    DIALOG_CLOSE = SEL.DIALOG_CLOSE          # 关闭按钮
     CLAIM_MODAL = '[class*="dialog"]:visible'   # 认领弹窗
     STORE_TAG = '[class*="select-block-item"]'  # 店铺选择标签
     DROPDOWN_ITEM = '[class*="select-option"], [class*="option-item"]'
-    SUCCESS_TOAST = '[class*="message--success"], [class*="t-message--success"]'
+    SUCCESS_TOAST = SEL.SUCCESS_TOAST
     CLAIM_CONFIRM = '确定'                       # 认领确认（可见的那个）
 
     def __init__(self, page: Page):
@@ -40,7 +42,7 @@ class ERPPublisher:
     def navigate_to_publish(self):
         """导航到Shopee产品发布页"""
         self.page.goto(self.get_publish_url())
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
 
     def navigate_to_collection_box(self):
         """导航到采集箱（三重保障：慢速+等待+重试）"""
@@ -49,15 +51,15 @@ class ERPPublisher:
         for attempt in range(max_retry):
             try:
                 # 先用 wait_until=domcontentloaded 减少导航冲突窗口
-                self.page.goto(self.get_collect_box_url(), wait_until="domcontentloaded", timeout=60000)
+                self.page.goto(self.get_collect_box_url(), wait_until="domcontentloaded", timeout=T.NAVIGATION)
                 # 等渲染稳定后再等网络空闲
-                _time.sleep(3)
-                self.page.wait_for_load_state("networkidle", timeout=60000)
+                sleep(T.THREE_SECONDS)
+                self.page.wait_for_load_state("networkidle", timeout=T.NAVIGATION)
                 break
             except Exception as e:
                 if attempt < max_retry - 1:
                     print(f"  ⚠️ 导航采集箱被中断，第{attempt+2}次重试...", flush=True)
-                    _time.sleep(2)
+                    sleep(T.TWO_SECONDS)
                 else:
                     raise
 
@@ -75,7 +77,7 @@ class ERPPublisher:
         clicked = False
         try:
             btn = self.page.locator("button.t-button--variant-base.t-button--theme-primary:has-text('认领')").first
-            if btn.is_visible(timeout=3000):
+            if btn.is_visible(timeout=T.ELEMENT_VISIBLE):
                 btn.click()
                 clicked = True
         except:
@@ -83,7 +85,7 @@ class ERPPublisher:
         if not clicked:
             try:
                 btn = self.page.locator("button:has-text('认领')").last
-                if btn.is_visible(timeout=3000):
+                if btn.is_visible(timeout=T.ELEMENT_VISIBLE):
                     btn.click()
                     clicked = True
             except:
@@ -93,15 +95,28 @@ class ERPPublisher:
                 const btns = document.querySelectorAll('button');
                 for (const btn of btns) {
                     if (btn.textContent.includes('认领') && btn.offsetParent !== null) {
-                        btn.click(); return;
+                        btn.click(); return true;
                     }
                 }
+                return false;
             }""")
+            # 检查JS兜底是否成功执行
+            js_clicked = self.page.evaluate("""() => {
+                const btns = document.querySelectorAll('button');
+                for (const btn of btns) {
+                    if (btn.textContent.includes('认领') && btn.offsetParent !== null) {
+                        return true;
+                    }
+                }
+                return false;
+            }""")
+            if js_clicked:
+                clicked = True
         if not clicked:
             print("  ⚠️ 点击认领按钮失败（3种方案均未找到）", flush=True)
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
 
-    def get_store_list_from_modal(self) -> list[dict]:
+    def get_store_list_from_modal(self, max_retries: int = 5, initial_delay: float = 1.0) -> list[dict]:
         """从认领弹窗中动态提取店铺列表（不硬编码，根据实际账号返回）
 
         货憨憨认领弹窗表单结构：
@@ -109,68 +124,130 @@ class ERPPublisher:
         地区：全部 台湾    ← .select-block-item (地区筛选)
         店铺：全部 吉象星連坊 順順の小屋童裝 ...  ← 真正的店铺列表
 
-        策略：找「店铺」label → 取其容器内所有 .select-block-item（排除"全部"）
+        策略：找「店铺」label → 取其容器内所有 .select-block-item（排除TXT.LABEL_ALL）
+        增加：重试机制 + 显式等待弹窗渲染 + 调试日志
         """
-        # 方案1：按「店铺」label 定位 → 同级容器中的店铺checkbox/label
-        stores = self.page.evaluate("""() => {
-            const dialog = document.querySelector('[class*="dialog"]:not([style*="display: none"])');
-            if (!dialog) return [];
+        import time as _time
 
-            // 找「店铺」label
-            const labels = dialog.querySelectorAll('label, [class*="label"]');
-            let storeSection = null;
-            labels.forEach(l => {
-                if (l.textContent.trim() === '店铺') {
-                    let el = l.parentElement;
-                    while (el && el !== dialog) {
-                        if (el.classList.contains('t-form__item')) {
-                            storeSection = el;
-                            break;
+        for attempt in range(max_retries):
+            delay = initial_delay * (1.5 ** attempt)  # 1s → 1.5s → 2.25s → ...
+            _time.sleep(delay)
+
+            # 方案1：按「店铺」label 定位 → 同级容器中的店铺checkbox/label
+            stores = self.page.evaluate("""(t) => {
+                // t = {labelStore, labelSelectStore, labelAll, labelShopee, labelTaiwan}
+                // 找弹窗（多种选择器）
+                const dialog = document.querySelector(
+                    '[class*="dialog"]:not([style*="display: none"]), ' +
+                    '[class*="modal"]:not([style*="display: none"]), ' +
+                    '[role="dialog"]:not([style*="display: none"])'
+                );
+                if (!dialog) return [];
+
+                // 找「店铺」label — 多种匹配策略
+                const labels = dialog.querySelectorAll('label, [class*="label"], [class*="form__label"], span, div');
+                let storeSection = null;
+                labels.forEach(l => {
+                    if (storeSection) return;  // 已找到就跳过
+                    const text = l.textContent.trim();
+                    if (text === t.labelStore || text === t.labelSelectStore || text.startsWith(t.labelStore)) {
+                        // 向上找到表单项容器
+                        let el = l.parentElement;
+                        while (el && el !== dialog) {
+                            if (el.classList.contains('t-form__item') ||
+                                el.classList.contains('form-item') ||
+                                el.getAttribute('role') === 'group') {
+                                storeSection = el;
+                                break;
+                            }
+                            el = el.parentElement;
                         }
-                        el = el.parentElement;
+                        // 如果没找到 t-form__item，用 label 的直接父级
+                        if (!storeSection && l.parentElement) {
+                            storeSection = l.parentElement;
+                            // 再往上找一层（常见：label 在一个 div 里，和 checkbox-group 同级）
+                            if (storeSection.parentElement && storeSection.parentElement !== dialog) {
+                                storeSection = storeSection.parentElement;
+                            }
+                        }
                     }
-                }
-            });
-            if (!storeSection) return [];
+                });
 
-            // 从 checkbox-group 和 select-block-item 两路提取
-            const seen = new Set();
-            const stores = [];
-            
-            // 路A: label元素（t-checkbox-group label）
-            const cbLabels = storeSection.querySelectorAll('[class*="checkbox-group"] label');
-            cbLabels.forEach(el => {
-                const t = el.textContent.trim();
-                if (t && t !== '全部' && !seen.has(t)) {
-                    seen.add(t);
-                    stores.push({ store_id: '', store_name: t, platform: 'Shopee' });
-                }
-            });
-            
-            // 路B: select-block-item 标签
-            const blocks = storeSection.querySelectorAll('[class*="select-block-item"]');
-            blocks.forEach(item => {
-                const t = item.textContent.trim();
-                if (t && t !== '全部' && t !== 'Shopee' && !t.includes('台湾') && !seen.has(t)) {
-                    seen.add(t);
-                    stores.push({
-                        store_id: item.getAttribute('data-id') || item.getAttribute('data-value') || '',
-                        store_name: t,
-                        platform: 'Shopee',
+                const seen = new Set();
+                const stores = [];
+                const searchRoot = storeSection || dialog;
+
+                // 路A: label元素（t-checkbox-group label）
+                const cbLabels = searchRoot.querySelectorAll('[class*="checkbox-group"] label, [class*="checkbox"] label');
+                cbLabels.forEach(el => {
+                    const elemText = el.textContent.trim();
+                    if (elemText && elemText !== t.labelAll && !seen.has(elemText)) {
+                        seen.add(elemText);
+                        stores.push({ store_id: '', store_name: elemText, platform: t.labelShopee });
+                    }
+                });
+
+                // 路B: select-block-item 标签
+                const blocks = searchRoot.querySelectorAll('[class*="select-block-item"]');
+                blocks.forEach(item => {
+                    const elemText = item.textContent.trim();
+                    if (elemText && elemText !== t.labelAll && elemText !== t.labelShopee && !elemText.includes(t.labelTaiwan) && !seen.has(elemText)) {
+                        seen.add(elemText);
+                        stores.push({
+                            store_id: item.getAttribute('data-id') || item.getAttribute('data-value') || '',
+                            store_name: elemText,
+                            platform: t.labelShopee,
+                        });
+                    }
+                });
+
+                // 路C: 任何可点击的 checkbox / tag 元素（兜底）
+                if (stores.length === 0) {
+                    const clickableItems = searchRoot.querySelectorAll(
+                        '[class*="tag"]:not([class*="platform"]):not([class*="region"]), ' +
+                        '[class*="checkbox"]:not([class*="group"]), ' +
+                        '[role="checkbox"]'
+                    );
+                    clickableItems.forEach(item => {
+                        const elemText = item.textContent.trim();
+                        if (elemText && elemText !== t.labelAll && elemText !== t.labelShopee && !elemText.includes(t.labelTaiwan)
+                            && elemText.length > 1 && elemText.length < 30 && !seen.has(elemText)) {
+                            seen.add(elemText);
+                            stores.push({
+                                store_id: item.getAttribute('data-id') || item.getAttribute('data-value') || '',
+                                store_name: elemText,
+                                platform: t.labelShopee,
+                            });
+                        }
                     });
                 }
-            });
-            
-            return stores;
-        }""")
 
-        if stores:
-            return stores
+                return stores;
+            }""", {
+                "labelStore": TXT.LABEL_STORE,
+                "labelSelectStore": TXT.LABEL_SELECT_STORE,
+                "labelAll": TXT.LABEL_ALL,
+                "labelShopee": TXT.LABEL_SHOPEE,
+                "labelTaiwan": TXT.LABEL_TAIWAN,
+            })
 
-        # 方案2兜底：扫所有 select-block-item，过滤非店铺
-        blocks = self.page.locator(self.STORE_TAG).all()
-        all_items = self._parse_store_blocks(blocks)
-        return [s for s in all_items if s["store_name"] not in ("Shopee", "全部", "台湾")]
+            if stores:
+                return stores
+
+            # 方案2兜底：扫所有 select-block-item，过滤非店铺
+            try:
+                blocks = self.page.locator(self.STORE_TAG).all()
+                all_items = self._parse_store_blocks(blocks)
+                filtered = [s for s in all_items if s["store_name"] not in ("Shopee", TXT.LABEL_ALL, "台湾")]
+                if filtered:
+                    return filtered
+            except Exception:
+                pass
+
+            print(f"  ⏳ 等待店铺列表加载... (第{attempt+1}/{max_retries}次)", flush=True)
+
+        print("  ⚠️ 所有重试均未找到店铺列表", flush=True)
+        return []
 
     @staticmethod
     def _parse_store_blocks(blocks) -> list[dict]:
@@ -194,38 +271,75 @@ class ERPPublisher:
     def select_store(self, store_name: str):
         """在认领弹窗中选择目标店铺
 
-        三种定位策略：
+        四种定位策略（逐步升级）：
         1. t-checkbox-group label 文本匹配
         2. select-block-item 匹配
-        3. JS 兜底点击
+        3. JS 兜底点击（精确 + 模糊）
+        4. JS 全文搜索点击
         """
+        import time as _time
+
         # 方案1: checkbox-group label
-        label = self.page.locator(
-            f"[class*='checkbox-group'] label:has-text('{store_name}')"
-        ).first
-        if label.is_visible():
-            label.click()
-            return
+        try:
+            label = self.page.locator(
+                f"[class*='checkbox-group'] label:has-text('{store_name}')"
+            ).first
+            if label.is_visible(timeout=T.TWO_SECONDS):
+                label.click()
+                return
+        except Exception:
+            pass
 
         # 方案2: select-block-item
-        block = self.page.locator(
-            f"{self.STORE_TAG}:has-text('{store_name}')"
-        ).first
-        if block.is_visible():
-            block.click()
-            return
+        try:
+            block = self.page.locator(
+                f"{self.STORE_TAG}:has-text('{store_name}')"
+            ).first
+            if block.is_visible(timeout=T.TWO_SECONDS):
+                block.click()
+                return
+        except Exception:
+            pass
 
-        # 方案3: JS 兜底
-        self.page.evaluate("""(storeName) => {
-            const dialog = document.querySelector('[class*="dialog"]:not([style*="display: none"])');
+        # 方案3: JS 兜底（精确匹配 + 模糊匹配）
+        clicked = self.page.evaluate("""(storeName) => {
+            const dialog = document.querySelector(
+                '[class*="dialog"]:not([style*="display: none"]), ' +
+                '[class*="modal"]:not([style*="display: none"]), ' +
+                '[role="dialog"]:not([style*="display: none"])'
+            );
             if (!dialog) return false;
             const items = dialog.querySelectorAll(
-                '[class*="checkbox-group"] label, [class*="select-block-item"]'
+                '[class*="checkbox-group"] label, [class*="select-block-item"], [class*="tag"], [role="checkbox"]'
             );
+            // 精确匹配
             for (const el of items) {
-                if (el.textContent.trim().includes(storeName)) {
-                    el.click();
-                    return true;
+                if (el.textContent.trim() === storeName) {
+                    el.click(); return true;
+                }
+            }
+            // 模糊匹配（包含）
+            for (const el of items) {
+                if (el.textContent.trim().includes(storeName) || storeName.includes(el.textContent.trim())) {
+                    el.click(); return true;
+                }
+            }
+            return false;
+        }""", store_name)
+        if clicked:
+            return
+
+        # 方案4: 全文搜索弹窗内所有可点击元素
+        self.page.evaluate("""(storeName) => {
+            const dialog = document.querySelector(
+                '[class*="dialog"]:not([style*="display: none"]), ' +
+                '[class*="modal"]:not([style*="display: none"])'
+            );
+            if (!dialog) return false;
+            const allEls = dialog.querySelectorAll('*');
+            for (const el of allEls) {
+                if (el.children.length === 0 && el.textContent.trim() === storeName && el.offsetParent !== null) {
+                    el.click(); return true;
                 }
             }
             return false;
@@ -258,28 +372,28 @@ class ERPPublisher:
             }""")
         else:
             confirm.first.click()
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
 
     def filter_by_store(self, store_name: str):
         """在发布页按店铺名筛选"""
-        self.page.locator("[placeholder*='店铺']").click()
+        self.page.locator(f"[placeholder*='{TXT.LABEL_STORE}']").click()
         self.page.locator(f"text={store_name}").click()
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
 
     def set_no_listing(self):
         """设置「发布后暂不上架」（安全红线）"""
         self.page.locator("button:has-text('发布配置')").click()
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
         self.page.locator("text=暂不上架").click()
         self.page.locator("button:has-text('确定')").click()
 
     def publish_now(self):
         """产品发布 → 立即发布 → 确认"""
         self.page.locator("button:has-text('产品发布')").click()
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
         self.page.locator("text=立即发布").click()
         self.page.locator("button:has-text('确定')").click()
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
 
     @staticmethod
     def check_row_checkbox(row) -> bool:
@@ -296,27 +410,13 @@ class ERPPublisher:
         if toast.is_visible():
             return "success"
         self.page.locator("text=发布成功").click()
-        self.page.wait_for_load_state("networkidle", timeout=30000)
+        self.page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
         rows = self.page.locator("table tbody tr").count()
         return f"done ({rows} items)"
 
 
-def _get_tab_count(page, tab_text="未认领") -> int:
-    """从tab标签读取计数，如「未认领(10)」→ 10
-    
-    双保险策略:
-    1. 先尝试从 body.innerText 正则匹配（最可靠）
-    2. 兜底: 从 DOM 元素 [class*=t-tab] 中提取
-    """
-    import re
-    # 策略1: body 文本匹配
-    body_text = page.evaluate('() => document.body.innerText')
-    pattern = re.escape(tab_text) + r'[（(]\s*(\d+)\s*[）)]'
-    m = re.search(pattern, body_text)
-    if m:
-        return int(m.group(1))
-    
-    # 策略2: DOM元素查询
+def _get_tab_count(page, tab_text=TXT.TAB_UNCLAIMED) -> int:
+    """从tab标签读取计数，如「未认领(10)」→ 10"""
     count = page.evaluate("""(tab) => {
         const tabs = document.querySelectorAll('[class*="t-tab"]');
         for (const t of tabs) {
@@ -334,19 +434,19 @@ def _get_tab_count(page, tab_text="未认领") -> int:
     return count
 
 
-def _get_collect_box_pages(page, tab_text="未认领") -> int:
+def _get_collect_box_pages(page, tab_text=TXT.TAB_UNCLAIMED) -> int:
     """获取采集箱指定tab的总页数"""
-    total = page.evaluate("""() => {
-        const pag = document.querySelector('.t-pagination');
+    total = page.evaluate("""({pagSel, pageNumSel}) => {
+        const pag = document.querySelector(pagSel);
         if (!pag) return 1;
-        const items = pag.querySelectorAll('.t-pagination__number');
+        const items = pag.querySelectorAll(pageNumSel);
         const nums = Array.from(items).map(n => parseInt(n.textContent)).filter(n => !isNaN(n));
         return Math.max(...nums, 1);
-    }""")
+    }""", {"pagSel": SEL.PAGINATION, "pageNumSel": SEL.PAGE_NUMBER})
     return total
 
 
-def _check_ids_on_page(page, reject_ids: set, tab_text="未认领") -> int:
+def _check_ids_on_page(page, reject_ids: set, tab_text=TXT.TAB_UNCLAIMED) -> int:
     """在当前页勾选匹配的reject_ids，返回勾选数
 
     双引擎扫描策略（2026-05-19 修复）：
@@ -357,10 +457,10 @@ def _check_ids_on_page(page, reject_ids: set, tab_text="未认领") -> int:
     reject_list = list(reject_ids)
 
     # 检查 scroller 状态，选引擎
-    s = page.evaluate("""() => {
-        const s = document.querySelector('.vue-recycle-scroller');
+    s = page.evaluate("""(ssel) => {
+        const s = document.querySelector(ssel);
         return s ? {h: s.scrollHeight, ch: s.clientHeight} : null;
-    }""")
+    }""", SEL.SCROLLER)
     if not s:
         return _check_ids_via_window_scroll(page, reject_list)
 
@@ -375,23 +475,23 @@ def _check_ids_on_page(page, reject_ids: set, tab_text="未认领") -> int:
 def _check_ids_via_internal_scroll(page, reject_ids: list) -> int:
     """引擎①：内部滚动 scroller → 勾选隐藏行的 checkbox"""
     total_checked = 0
-    s = page.evaluate("""() => {
-        const s = document.querySelector('.vue-recycle-scroller');
+    s = page.evaluate("""(ssel) => {
+        const s = document.querySelector(ssel);
         return s ? {h: s.scrollHeight, ch: s.clientHeight} : null;
-    }""")
+    }""", SEL.SCROLLER)
     if not s:
         return 0
 
     reject_set = set(reject_ids)
     for pass_n in range(3):
-        step = 80
+        step = C.SCROLL_INTERNAL_STEP
         max_pos = max(0, s["h"] - s["ch"])
         for pos in range(0, max_pos + step, step):
-            page.evaluate(f"() => {{ const s = document.querySelector('.vue-recycle-scroller'); if(s) s.scrollTop = {min(pos, max_pos)}; }}")
-            page.wait_for_timeout(150)
+            page.evaluate(f"() => {{ const s = document.querySelector('{SEL.SCROLLER}'); if(s) s.scrollTop = {min(pos, max_pos)}; }}")
+            sleep(T.SCROLL_FAST)
 
-        page.evaluate("() => { const s = document.querySelector('.vue-recycle-scroller'); if(s) s.scrollTop = 0; }")
-        page.wait_for_timeout(300)
+        page.evaluate("""(ssel) => { const s = document.querySelector(ssel); if(s) s.scrollTop = 0; }""", SEL.SCROLLER)
+        sleep(T.SCROLL_RECOVER)
 
         checked = _check_visible_checkboxes(page, reject_set)
         total_checked += checked
@@ -415,11 +515,11 @@ def _check_ids_via_window_scroll(page, reject_ids: list) -> int:
         document.body.style.minHeight = "6000px";
         document.documentElement.style.minHeight = "6000px";
     }""")
-    page.wait_for_timeout(500)
+    sleep(T.HALF_SECOND)
 
-    for i in range(60):
+    for i in range(C.MAX_SCROLL_STEPS):
         page.evaluate("window.scrollTo(0, %d)" % (i * 150))
-        page.wait_for_timeout(300)
+        sleep(T.SCROLL_RECOVER)
 
         checked = _check_visible_checkboxes(page, reject_set)
         total_checked += checked
@@ -427,7 +527,7 @@ def _check_ids_via_window_scroll(page, reject_ids: list) -> int:
         # 连续5次无新增 → 退出
         if checked == 0:
             stable_count = sum(1 for j in range(max(0,i-4), i+1) if True)
-            if stable_count >= 5:
+            if stable_count >= C.ALIGN_CHECK_COUNT_MAX:
                 break
 
     # 恢复页面
@@ -461,138 +561,174 @@ def _check_visible_checkboxes(page, reject_ids: set) -> int:
 
 
 def delete_rejected_products(page, reject_ids: list[str]) -> int:
-    """从采集箱批量删除不合规商品（支持分页+虚拟滚动）
+    """从采集箱批量删除不合规商品
 
-    遍历所有分页，逐页勾选匹配的reject_ids，最后统一批量删除。
+    策略：claim-and-replace 循环——每次只扫第1页可视行
+    勾选匹配的reject_ids → 删除 → 页面刷新 → 后续页填充到第1页 → 继续
+    翻页会导致已勾选checkbox失效，所以不能用"遍历所有分页再删"的方式
 
     Args:
         page: Playwright page (connect_over_cdp)
         reject_ids: ERP ID 列表
 
     Returns:
-        实际删除数量
+        实际删除数量（累计所有轮次）
     """
     if not reject_ids:
         return 0
 
     reject_set = set(str(i) for i in reject_ids)
+    deleted_set = set()
+    max_rounds = len(reject_set) + C.DELETE_REPLACE_OFFSET
+    total_removed = 0
+
     print(f"\n  🗑️  删除 {len(reject_set)} 个不合规商品...")
 
     try:
-        # 切回采集箱未认领tab
+        # 导航到采集箱
         page.goto(ERPPublisher.get_collect_box_url())
-        page.wait_for_load_state("networkidle", timeout=30000)
-        page.wait_for_selector(".virtual-table-container", timeout=10000)
-        page.locator("text=未认领").first.click()
-        page.wait_for_load_state("networkidle", timeout=30000)
-        page.wait_for_selector(".virtual-table-container", timeout=10000)
+        page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
+        sleep(T.TWO_SECONDS)
 
-        # 读取tab权威计数
-        tab_count = _get_tab_count(page)
-        print(f"    未认领: {tab_count} 件（页面计数）")
-
-        # 遍历所有分页
-        total_pages = _get_collect_box_pages(page)
-        total_checked = 0
-
-        for pg in range(1, total_pages + 1):
-            if pg > 1:
-                # 切到下一页
-                page.evaluate(f"""((n) => {{
-                    const pages = document.querySelectorAll('.t-pagination__number');
-                    for (const p of pages) {{
-                        if (parseInt(p.textContent) === n) {{ p.click(); return; }}
-                    }}
-                }})""", pg)
-                page.wait_for_load_state("networkidle", timeout=15000)
-                page.wait_for_selector(".virtual-table-container", timeout=10000)
-                page.wait_for_timeout(1500)
-
-            checked = _check_ids_on_page(page, reject_set)
-            if checked:
-                print(f"    第{pg}页: 勾选 {checked} 个")
-                total_checked += checked
-
-        if total_checked == 0:
-            print("  ⚠️ 未找到待删除商品")
-            return 0
-
-        # 点批量删除按钮
+        # 关弹窗
         page.evaluate("""() => {
-            const btns = document.querySelectorAll('button');
-            for (const btn of btns) {
-                if (btn.textContent.includes('删除') && btn.classList.contains('t-button--variant-base')) {
-                    btn.click(); return;
-                }
+            document.querySelectorAll('[class*="dialog"]').forEach(d => {
+                const c = d.querySelector('[class*="close"]');
+                if (c && typeof c.click === 'function') c.click();
+            });
+        }""")
+        sleep(T.HALF_SECOND)
+
+        # 切到未认领 tab（JS避免中文编码问题）
+        page.evaluate("""() => {
+            const tabs = document.querySelectorAll('[class*="t-tab"],[class*="radio-button"]');
+            for (const t of tabs) {
+                if (t.textContent.match(/未认领|鏈棰?/)) { t.click(); return; }
             }
         }""")
+        page.wait_for_load_state("networkidle", timeout=T.NETWORK_IDLE)
+        sleep(T.TWO_SECONDS)
 
-        # 等确认弹窗
-        page.wait_for_timeout(1000)
-        page.evaluate("""() => {
-            var btns = document.querySelectorAll('[class*="dialog"] button');
-            for (var i = 0; i < btns.length; i++) {
-                if (btns[i].offsetParent && btns[i].textContent.trim() === '确认') {
-                    btns[i].click(); return;
-                }
-            }
-            // 兜底
-            var confirms = document.querySelectorAll('.t-dialog__confirm');
-            for (var i = 0; i < confirms.length; i++) {
-                if (confirms[i].offsetParent) { confirms[i].click(); return; }
-            }
-        }""")
-
-        page.wait_for_timeout(2000)
-        # 关失败详情弹窗（如果有）
-        page.evaluate("""() => {
-            const closes = document.querySelectorAll('.t-dialog__close');
-            for (const c of closes) c.click();
-        }""")
-
-        print(f"  ✅ 已从采集箱批量删除 {total_checked} 个")
-        
-        # 🔴 追加删除：被拒商品可能因虚拟滚动只删了部分，再扫描剩余未删的
-        remaining = reject_set.copy()  # 已经删的部分和原有一起传
-        retry_count = 0
-        while retry_count < 5:
-            # 重新扫描当前页是否有未删的
-            more = _check_ids_on_page(page, remaining)
-            if more == 0:
-                break
-            total_checked += more
-            print(f"  🔄 追加删除 {more} 个（第{retry_count+2}轮）")
-            
-            # 点批量删除
+        # 循环：先全量展开触发虚拟滚动渲染，再扫第1页
+        # 删完后续页自动填充到第1页
+        for loop in range(max_rounds):
+            # 展开页面高度+全量滚动，触发虚拟滚动渲染全部行到DOM
+            page.evaluate("""(h) => {
+                document.body.style.minHeight = h + "px";
+                document.documentElement.style.minHeight = h + "px";
+                window.scrollTo(0, 0);
+            }""", 80000)
+            sleep(T.HALF_SECOND)
             page.evaluate("""() => {
+                for (let y = 0; y < 80000; y += 200) {
+                    window.scrollTo(0, y);
+                }
+                window.scrollTo(0, 0);
+            }""")
+            sleep(T.HALF_SECOND)
+
+            # 扫第1页可视行，找仍然存在的reject_ids
+            still_visible = page.evaluate("""({rejectSet, deletedSet}) => {
+                const targetSet = new Set(rejectSet);
+                const doneSet = new Set(deletedSet);
+                const found = [];
+                document.querySelectorAll('[class*="virtual-table-tr"]').forEach(row => {
+                    const m = row.textContent.match(/货源ID[：:]\\s*(\\d+)/);
+                    if (m && targetSet.has(m[1]) && !doneSet.has(m[1])) {
+                        found.push(m[1]);
+                    }
+                });
+                return found;
+            }""", {"rejectSet": list(reject_set), "deletedSet": list(deleted_set)})
+
+            if not still_visible:
+                if deleted_set:
+                    print(f"   第{loop+1}轮: 无可匹配ID，所有目标已删除")
+                else:
+                    print(f"   第{loop+1}轮: 页面无可匹配ID")
+                break
+
+            # 勾选匹配的行
+            checked = page.evaluate("""(ids) => {
+                const idSet = new Set(ids);
+                let n = 0;
+                document.querySelectorAll('[class*="virtual-table-tr"]').forEach(row => {
+                    const m = row.textContent.match(/货源ID[：:]\\s*(\\d+)/);
+                    if (m && idSet.has(m[1])) {
+                        const cb = row.querySelector('input[type="checkbox"]');
+                        if (cb && !cb.checked) {
+                            cb.click();
+                            n++;
+                        }
+                    }
+                });
+                return n;
+            }""", still_visible)
+
+            if checked == 0:
+                print(f"   第{loop+1}轮: 页面无未勾选目标")
+                break
+
+            print(f"   第{loop+1}轮: 勾选 {checked} 个 → 删除...")
+
+            # 点击批量删除按钮
+            page.evaluate("""(delText) => {
                 const btns = document.querySelectorAll('button');
                 for (const btn of btns) {
-                    if (btn.textContent.includes('删除') && btn.classList.contains('t-button--variant-base')) {
+                    if (btn.textContent.includes(delText) && btn.classList.contains('t-button--variant-base')) {
                         btn.click(); return;
                     }
                 }
-            }""")
-            page.wait_for_selector(".t-dialog__confirm", timeout=8000)
-            page.evaluate("""() => {
-                const confirms = document.querySelectorAll('.t-dialog__confirm');
-                for (const btn of confirms) { btn.click(); return; }
-            }""")
-            page.wait_for_timeout(2000)
-            # 关失败弹窗
-            page.evaluate("""() => {
-                const closes = document.querySelectorAll('.t-dialog__close');
-                for (const c of closes) c.click();
-            }""")
-            retry_count += 1
+            }""", TXT.BTN_DELETE)
 
-        print(f"  ✅ 累计从采集箱删除 {total_checked} 个不合规商品")
-        print()
-        return total_checked
+            # 确认弹窗
+            sleep(T.ONE_SECOND)
+            confirmed = page.evaluate("""(confirmText) => {
+                const btns = document.querySelectorAll('[class*="dialog"] button, button');
+                for (const btn of btns) {
+                    if (btn.offsetParent !== null && (btn.textContent.trim() === confirmText || btn.classList.contains('t-dialog__confirm'))) {
+                        btn.click(); return true;
+                    }
+                }
+                return false;
+            }""", TXT.BTN_CONFIRM)
+
+            page.wait_for_timeout(3000)
+
+            # 关结果弹窗
+            page.evaluate("""() => {
+                const closes = document.querySelectorAll('.t-dialog__close, [class*="dialog"] [class*="close"]');
+                for (const c of closes) {
+                    if (c.offsetParent !== null && typeof c.click === 'function') c.click();
+                }
+            }""")
+            sleep(T.HALF_SECOND)
+
+            if confirmed:
+                deleted_set.update(still_visible)
+                total_removed += checked
+                print(f"   ✅ 本轮删除 {checked} 个 (累计 {total_removed}/{len(reject_set)})")
+            else:
+                print(f"   ⚠️ 删除确认弹窗未找到，尝试继续")
+                continue
+
+        print(f"  ✅ 累计从采集箱删除 {total_removed} 个不合规商品")
+
+        # 恢复页面
+        page.evaluate("""() => {
+            window.scrollTo(0, 0);
+            document.body.style.minHeight = "";
+            document.documentElement.style.minHeight = "";
+        }""")
+        sleep(T.SCROLL_RECOVER)
+
+        return total_removed
 
     except Exception as e:
         print(f"  ⚠️ 删除操作异常: {e}")
-        print("  ℹ️  可尝试手动删除或重新运行 --delete-rejected")
-        return 0
+        import traceback
+        traceback.print_exc()
+        return total_removed
 
 
 def _extract_visible_products(page) -> list[dict]:
@@ -650,13 +786,11 @@ def _scroll_window_for_all_products(page, tab_count: int, max_scrolls=50) -> lis
     Returns:
         去重后的商品列表（可能少于 tab_count，差值即虚拟滚动未渲染部分）
     """
-    # 根据商品数量动态设置页面高度（每件约 250px + 保底 4000px）
-    min_height = max(4000, tab_count * 250 + 500)
-    page.evaluate(f"""() => {{
-        document.body.style.minHeight = "{min_height}px";
-        document.documentElement.style.minHeight = "{min_height}px";
-    }}""")
-    page.wait_for_timeout(300)
+    page.evaluate("""() => {
+        document.body.style.minHeight = "3000px";
+        document.documentElement.style.minHeight = "3000px";
+    }""")
+    sleep(T.SCROLL_RECOVER)
 
     all_ids = set()
     all_products = []
@@ -666,7 +800,7 @@ def _scroll_window_for_all_products(page, tab_count: int, max_scrolls=50) -> lis
     for i in range(max_scrolls):
         y = i * step
         page.evaluate("window.scrollTo(0, %d)" % y)
-        page.wait_for_timeout(500)
+        sleep(T.HALF_SECOND)
 
         products = _extract_visible_products(page)
         added = 0
@@ -684,7 +818,7 @@ def _scroll_window_for_all_products(page, tab_count: int, max_scrolls=50) -> lis
 
         if len(all_ids) >= tab_count:
             break
-        if stable > 25:
+        if stable >= C.MAX_STABLE_ROUNDS:
             break
 
     # 恢复页面状态
@@ -697,7 +831,7 @@ def _scroll_window_for_all_products(page, tab_count: int, max_scrolls=50) -> lis
     return all_products
 
 
-def scan_unclaimed_products(page, tab_text="未认领") -> dict:
+def scan_unclaimed_products(page, tab_text=TXT.TAB_UNCLAIMED) -> dict:
     """全量扫描采集箱「未认领」tab — 三重策略，不遗漏
 
     策略：
